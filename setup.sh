@@ -380,17 +380,21 @@ persist_path() {
   local dir="$1"
   local shell_name
   shell_name="$(basename "${SHELL:-}")"
-  local rc="$HOME/.profile"
-  case "$shell_name" in
-    zsh) rc="$HOME/.zshrc" ;;
-    bash) rc="$HOME/.bashrc" ;;
-  esac
   local line="export PATH=\"$dir:\$PATH\""
-  if [ -f "$rc" ] && grep -F "$line" "$rc" >/dev/null 2>&1; then
-    return
-  fi
-  printf '\n# Added by go-llm-gateway setup for Google Cloud CLI\n%s\n' "$line" >> "$rc"
-  ok "Persisted $dir in $rc"
+  local files=()
+  case "$shell_name" in
+    zsh) files=("$HOME/.zshrc" "$HOME/.zprofile") ;;
+    bash) files=("$HOME/.bashrc" "$HOME/.bash_profile") ;;
+    *) files=("$HOME/.profile") ;;
+  esac
+  local rc
+  for rc in "${files[@]}"; do
+    if [ -f "$rc" ] && grep -F "$line" "$rc" >/dev/null 2>&1; then
+      continue
+    fi
+    printf '\n# Added by go-llm-gateway setup for Google Cloud CLI\n%s\n' "$line" >> "$rc"
+    ok "Persisted $dir in $rc"
+  done
 }
 
 ensure_sudo_session() {
@@ -405,12 +409,38 @@ ensure_sudo_session() {
 }
 
 install_gcloud_macos_cmd() {
-  if ! command -v brew >/dev/null 2>&1; then
-    warn "Homebrew is not installed, so setup cannot auto-install Google Cloud CLI on macOS."
-    echo "Install Homebrew first, then rerun: make setup INSTALL_GCLOUD=1"
+  if command -v brew >/dev/null 2>&1; then
+    brew install --cask gcloud-cli
+    return
+  fi
+  install_gcloud_macos_tarball_cmd
+}
+
+install_gcloud_macos_tarball_cmd() {
+  local arch
+  arch="$(uname -m)"
+  local package="google-cloud-cli-darwin-x86_64.tar.gz"
+  if [ "$arch" = "arm64" ]; then
+    package="google-cloud-cli-darwin-arm.tar.gz"
+  fi
+  local install_dir="$HOME/google-cloud-sdk"
+  if [ -x "$install_dir/bin/gcloud" ]; then
+    return
+  fi
+  if [ -e "$install_dir" ]; then
+    warn "$install_dir exists but does not contain bin/gcloud."
     return 1
   fi
-  brew install --cask google-cloud-sdk
+  local tmpdir
+  tmpdir="$(mktemp -d /tmp/gcloud-install.XXXXXX)"
+  (
+    cd "$tmpdir"
+    curl -fsSLO "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/$package"
+    tar -xzf "$package"
+    mv google-cloud-sdk "$install_dir"
+    "$install_dir/install.sh" --quiet --path-update=false --command-completion=false --usage-reporting=false || true
+  )
+  test -x "$install_dir/bin/gcloud"
 }
 
 install_gcloud_apt_cmd() {
@@ -478,7 +508,10 @@ install_gcloud() {
   step "Installing Google Cloud CLI"
   case "$(uname -s)" in
     Darwin)
-      run_quiet "Installing Google Cloud CLI with Homebrew" install_gcloud_macos_cmd || return 1
+      if ! run_quiet "Installing Google Cloud CLI with Homebrew" install_gcloud_macos_cmd; then
+        warn "Homebrew install failed; trying official Google Cloud CLI tarball."
+        run_quiet "Installing Google Cloud CLI tarball" install_gcloud_macos_tarball_cmd || return 1
+      fi
       ;;
     Linux)
       ensure_sudo_session
@@ -583,6 +616,16 @@ check_go() {
 }
 
 check_gcloud() {
+  ensure_command_on_path gcloud \
+    "/opt/homebrew/bin/gcloud" \
+    "/usr/local/bin/gcloud" \
+    "/opt/google-cloud-cli/bin/gcloud" \
+    "$HOME/google-cloud-sdk/bin/gcloud" \
+    "/opt/homebrew/share/google-cloud-sdk/bin/gcloud" \
+    "/usr/local/share/google-cloud-sdk/bin/gcloud" \
+    "/opt/homebrew/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/bin/gcloud" \
+    "/usr/local/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/bin/gcloud" >/dev/null 2>&1 || true
+
   if ! command -v gcloud >/dev/null 2>&1; then
     warn "gcloud is not installed. It is required for live Vertex verification and local ADC auth."
     local choice=1
