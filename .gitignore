@@ -1,0 +1,6 @@
+.env
+*.log
+logs/*.jsonl
+coverage.out
+bin/
+.DS_Store

@@ -1,0 +1,16 @@
+{
+  "project": "your-project-id",
+  "location": "global",
+  "default_model": "gemini-3.1-pro-preview",
+  "allowed_models": [
+    "gemini-3.1-pro-preview",
+    "gemini-3.1-pro-preview-customtools",
+    "gemini-3-flash-preview"
+  ],
+  "allow_any_gemini_model": false,
+  "model_aliases": {},
+  "vertex_base_url": "https://aiplatform.googleapis.com",
+  "gateway_api_keys": ["dev-local-key"],
+  "log_path": "logs/requests.jsonl",
+  "request_timeout_seconds": 180
+}

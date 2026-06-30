@@ -1,0 +1,11 @@
+services:
+  llm-gateway:
+    build: .
+    container_name: llm-gateway
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./logs:/app/logs
+    restart: unless-stopped
