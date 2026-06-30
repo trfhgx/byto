@@ -1,6 +1,7 @@
 APP_NAME=llm-gateway
 BIN_DIR=bin
 GO_BUILD_CACHE?=$(CURDIR)/.cache/go-build
+.DEFAULT_GOAL := help
 
 ifneq (,$(wildcard .env))
 include .env
@@ -30,29 +31,57 @@ ifneq ($(filter 1 true yes,$(INSTALL_GCLOUD)),)
 SETUP_ARGS += --install-gcloud
 endif
 
-.PHONY: help setup run build test test-race test-live docker docker-prod clean fmt verify-gcp
+CLOUD_SETUP_ARGS=
+ifneq ($(strip $(PROJECT)),)
+CLOUD_SETUP_ARGS += --project $(PROJECT)
+endif
+ifneq ($(strip $(LOCATION)),)
+CLOUD_SETUP_ARGS += --location $(LOCATION)
+endif
+ifneq ($(strip $(MODEL)),)
+CLOUD_SETUP_ARGS += --model $(MODEL)
+endif
+ifneq ($(strip $(REGION)),)
+CLOUD_SETUP_ARGS += --region $(REGION)
+endif
+ifneq ($(strip $(SERVICE)),)
+CLOUD_SETUP_ARGS += --service $(SERVICE)
+endif
+ifneq ($(filter 1 true yes,$(DEPLOY)),)
+CLOUD_SETUP_ARGS += --deploy
+endif
+ifneq ($(filter 1 true yes,$(NON_INTERACTIVE)),)
+CLOUD_SETUP_ARGS += --non-interactive
+endif
+
+.PHONY: help setup setup-cloud cloud run build test test-race test-live clean fmt verify-gcp
 
 help:
-	@echo "Go LLM Gateway"
+	@echo "Byto Gateway"
 	@echo
-	@echo "Common commands:"
+	@echo "Use one of these:"
 	@echo "  make setup PROJECT=your-gcp-project"
-	@echo "  make verify-gcp MODEL=gemini-3.1-pro-preview"
-	@echo "  make test-live MODEL=gemini-2.5-flash"
+	@echo "  make setup-cloud PROJECT=your-gcp-project MODEL=gemini-2.5-flash"
+	@echo
+	@echo "Then:"
 	@echo "  make run"
 	@echo "  make test"
 	@echo
-	@echo "Setup options:"
-	@echo "  PROJECT=...          Google Cloud project ID"
-	@echo "  LOCATION=global      Vertex AI location"
-	@echo "  VERIFY_MODEL=...     Model used for setup verification/examples"
-	@echo "  API_KEY=...          Gateway API key"
-	@echo "  NON_INTERACTIVE=1    Use env/default values"
-	@echo "  SKIP_TESTS=1         Skip setup test run"
-	@echo "  INSTALL_GCLOUD=1     Install Google Cloud CLI if missing"
+	@echo "Cloud deploy:"
+	@echo "  make setup-cloud PROJECT=your-gcp-project MODEL=gemini-2.5-flash DEPLOY=1"
 
 setup:
-	@./setup.sh $(SETUP_ARGS)
+	@if [ -n "$(filter cloud,$(MAKECMDGOALS))" ] || [ "$(CLOUD)" = "1" ]; then \
+		./scripts/setup-cloud.sh $(CLOUD_SETUP_ARGS); \
+	else \
+		./setup.sh $(SETUP_ARGS); \
+	fi
+
+setup-cloud:
+	@./scripts/setup-cloud.sh $(CLOUD_SETUP_ARGS)
+
+cloud:
+	@:
 
 run:
 	go run ./cmd/gateway
@@ -80,12 +109,6 @@ fmt:
 verify-gcp:
 	@if [ -z "$(MODEL)" ]; then echo "MODEL is required, e.g. make verify-gcp MODEL=gemini-3.1-pro-preview"; exit 1; fi
 	./scripts/verify-vertex.sh "$(MODEL)"
-
-docker:
-	docker build -t $(APP_NAME):local .
-
-docker-prod:
-	docker compose -f docker-compose.yml up --build
 
 clean:
 	rm -rf $(BIN_DIR) coverage.out .cache
