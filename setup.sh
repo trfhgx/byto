@@ -19,21 +19,23 @@ SKIP_TESTS=0
 
 usage() {
   cat <<'EOF'
-Usage: ./setup.sh [options]
+Usage:
+  make setup PROJECT=my-gcp-project
 
-Options:
-  --project PROJECT_ID     Google Cloud project ID.
-  --location LOCATION      Vertex AI location, default: global.
-  --api-key KEY            Gateway API key for local calls.
-  --model MODEL            Default Gemini model.
-  --non-interactive        Do not prompt; use env/default values.
-  --skip-tests             Do not run the local Go test suite.
-  -h, --help               Show this help.
+This script is an internal runner for make setup. Prefer the Make commands below.
+
+Make options:
+  PROJECT=PROJECT_ID       Google Cloud project ID.
+  LOCATION=LOCATION        Vertex AI location, default: global.
+  API_KEY=KEY              Gateway API key for local calls.
+  MODEL=MODEL              Default Gemini model.
+  NON_INTERACTIVE=1        Do not prompt; use env/default values.
+  SKIP_TESTS=1             Do not run the local Go test suite.
 
 Examples:
-  ./setup.sh
-  ./setup.sh --project my-gcp-project
-  ./setup.sh --project my-gcp-project --non-interactive
+  make setup
+  make setup PROJECT=my-gcp-project
+  make setup PROJECT=my-gcp-project NON_INTERACTIVE=1
 EOF
 }
 
@@ -192,7 +194,7 @@ EOF_ENV
 
 check_go() {
   if ! command -v go >/dev/null 2>&1; then
-    fail "Go 1.22+ is required. Install Go first, then rerun ./setup.sh"
+    fail "Go 1.22+ is required. Install Go first, then rerun make setup"
   fi
   local version
   version="$(go version | awk '{print $3}' | sed 's/^go//')"

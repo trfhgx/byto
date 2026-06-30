@@ -43,7 +43,7 @@ Each application should own its own business logic. This gateway only owns LLM p
 ## Quick local setup
 
 ```bash
-./setup.sh --project your-project-id
+make setup PROJECT=your-project-id
 ```
 
 The setup script checks Go, creates `.env`, generates a local gateway API key, runs the non-live test suite, and prints the exact verification/run/curl commands.
@@ -51,13 +51,13 @@ The setup script checks Go, creates `.env`, generates a local gateway API key, r
 You can also run it interactively:
 
 ```bash
-./setup.sh
+make setup
 ```
 
 For CI or scripted setup:
 
 ```bash
-./setup.sh --project your-project-id --non-interactive
+make setup PROJECT=your-project-id NON_INTERACTIVE=1
 ```
 
 The resulting `.env` contains:
