@@ -422,10 +422,6 @@ ensure_sudo_session() {
 }
 
 install_gcloud_macos_cmd() {
-  if command -v brew >/dev/null 2>&1; then
-    brew install --cask gcloud-cli
-    return
-  fi
   install_gcloud_macos_tarball_cmd
 }
 
@@ -446,6 +442,7 @@ install_gcloud_macos_tarball_cmd() {
   fi
   local tmpdir
   tmpdir="$(mktemp -d /tmp/gcloud-install.XXXXXX)"
+  trap 'rm -rf "$tmpdir"' RETURN
   (
     cd "$tmpdir"
     curl -fsSLO "https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/$package"
@@ -521,10 +518,7 @@ install_gcloud() {
   step "Installing Google Cloud CLI"
   case "$(uname -s)" in
     Darwin)
-      if ! run_quiet "Installing Google Cloud CLI with Homebrew" install_gcloud_macos_cmd; then
-        warn "Homebrew install failed; trying official Google Cloud CLI tarball."
-        run_quiet "Installing Google Cloud CLI tarball" install_gcloud_macos_tarball_cmd || return 1
-      fi
+      run_quiet "Installing Google Cloud CLI" install_gcloud_macos_cmd || return 1
       ;;
     Linux)
       ensure_sudo_session
