@@ -397,6 +397,19 @@ persist_path() {
   done
 }
 
+link_gcloud_shim() {
+  local src="$1"
+  local dir
+  for dir in /opt/homebrew/bin /usr/local/bin; do
+    if [ -d "$dir" ] && [ -w "$dir" ] && printf ':%s:' "$PATH" | grep -F ":$dir:" >/dev/null 2>&1; then
+      ln -sf "$src" "$dir/gcloud"
+      ok "Linked gcloud into $dir"
+      return 0
+    fi
+  done
+  return 1
+}
+
 ensure_sudo_session() {
   if [ "$(id -u)" -eq 0 ]; then
     return
@@ -523,6 +536,9 @@ install_gcloud() {
       ;;
   esac
   hash -r
+  if [ -x "$HOME/google-cloud-sdk/bin/gcloud" ]; then
+    link_gcloud_shim "$HOME/google-cloud-sdk/bin/gcloud" || true
+  fi
   ensure_command_on_path gcloud \
     "/opt/homebrew/bin/gcloud" \
     "/usr/local/bin/gcloud" \
