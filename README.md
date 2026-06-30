@@ -60,6 +60,12 @@ For CI or scripted setup:
 make setup PROJECT=your-project-id NON_INTERACTIVE=1
 ```
 
+If `gcloud` is not installed, interactive setup offers to install it. For scripted setup:
+
+```bash
+make setup PROJECT=your-project-id INSTALL_GCLOUD=1
+```
+
 The resulting `.env` contains:
 
 ```bash

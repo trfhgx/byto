@@ -16,6 +16,7 @@ LOG_PATH="${LOG_PATH:-logs/requests.jsonl}"
 REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS:-180}"
 NON_INTERACTIVE=0
 SKIP_TESTS=0
+INSTALL_GCLOUD=0
 
 usage() {
   cat <<'EOF'
@@ -31,10 +32,12 @@ Make options:
   MODEL=MODEL              Default Gemini model.
   NON_INTERACTIVE=1        Do not prompt; use env/default values.
   SKIP_TESTS=1             Do not run the local Go test suite.
+  INSTALL_GCLOUD=1         Install Google Cloud CLI if missing.
 
 Examples:
   make setup
   make setup PROJECT=my-gcp-project
+  make setup PROJECT=my-gcp-project INSTALL_GCLOUD=1
   make setup PROJECT=my-gcp-project NON_INTERACTIVE=1
 EOF
 }
@@ -63,6 +66,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --skip-tests)
       SKIP_TESTS=1
+      shift
+      ;;
+    --install-gcloud)
+      INSTALL_GCLOUD=1
       shift
       ;;
     -h|--help)
@@ -124,12 +131,134 @@ prompt() {
   printf '%s' "$value"
 }
 
+confirm() {
+  local label="$1"
+  local default="${2:-n}"
+  local value=""
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    [ "$default" = "y" ]
+    return
+  fi
+  read -r -p "$label [$default]: " value
+  value="${value:-$default}"
+  case "$value" in
+    y|Y|yes|YES|Yes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 generate_key() {
   if command -v openssl >/dev/null 2>&1; then
     openssl rand -hex 32
     return
   fi
   od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
+}
+
+sudo_cmd() {
+  if [ "$(id -u)" -eq 0 ]; then
+    "$@"
+    return
+  fi
+  if command -v sudo >/dev/null 2>&1; then
+    sudo "$@"
+    return
+  fi
+  fail "This install step needs root privileges, but sudo is not available."
+}
+
+install_gcloud_macos() {
+  if ! command -v brew >/dev/null 2>&1; then
+    warn "Homebrew is not installed, so setup cannot auto-install Google Cloud CLI on macOS."
+    echo "Install Homebrew first, then rerun: make setup INSTALL_GCLOUD=1"
+    return 1
+  fi
+  brew install --cask google-cloud-sdk
+}
+
+install_gcloud_apt() {
+  if ! command -v curl >/dev/null 2>&1; then
+    sudo_cmd apt-get update
+    sudo_cmd apt-get install -y curl
+  fi
+  sudo_cmd apt-get update
+  sudo_cmd apt-get install -y apt-transport-https ca-certificates gnupg curl
+  sudo_cmd rm -f /usr/share/keyrings/cloud.google.gpg
+  curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo_cmd gpg --dearmor -o /usr/share/keyrings/cloud.google.gpg
+  echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" | sudo_cmd tee /etc/apt/sources.list.d/google-cloud-sdk.list >/dev/null
+  sudo_cmd apt-get update
+  sudo_cmd apt-get install -y google-cloud-cli
+}
+
+install_gcloud_yum_family() {
+  local installer="$1"
+  local el_major="9"
+  if [ -r /etc/os-release ]; then
+    # shellcheck disable=SC1091
+    . /etc/os-release
+    el_major="${VERSION_ID:-9}"
+    el_major="${el_major%%.*}"
+    if [ "$el_major" != "8" ] && [ "$el_major" != "9" ]; then
+      el_major="9"
+    fi
+  fi
+  cat <<'EOF_REPO' | sudo_cmd tee /etc/yum.repos.d/google-cloud-sdk.repo >/dev/null
+[google-cloud-cli]
+name=Google Cloud CLI
+baseurl=__BASEURL__
+enabled=1
+gpgcheck=1
+repo_gpgcheck=0
+gpgkey=https://packages.cloud.google.com/yum/doc/rpm-package-key.gpg
+EOF_REPO
+  sudo_cmd sed -i.bak "s#__BASEURL__#https://packages.cloud.google.com/yum/repos/cloud-sdk-el${el_major}-x86_64#g" /etc/yum.repos.d/google-cloud-sdk.repo
+  sudo_cmd "$installer" install -y google-cloud-cli
+}
+
+install_gcloud_linux() {
+  if command -v apt-get >/dev/null 2>&1; then
+    install_gcloud_apt
+    return
+  fi
+  if command -v dnf >/dev/null 2>&1; then
+    install_gcloud_yum_family dnf
+    return
+  fi
+  if command -v yum >/dev/null 2>&1; then
+    install_gcloud_yum_family yum
+    return
+  fi
+  if command -v snap >/dev/null 2>&1; then
+    sudo_cmd snap install google-cloud-cli --classic
+    return
+  fi
+  warn "No supported Linux package manager found for automatic Google Cloud CLI install."
+  echo "Supported auto-install paths: apt-get, dnf, yum, or snap."
+  return 1
+}
+
+install_gcloud() {
+  step "Installing Google Cloud CLI"
+  case "$(uname -s)" in
+    Darwin)
+      install_gcloud_macos
+      ;;
+    Linux)
+      install_gcloud_linux
+      ;;
+    *)
+      warn "Automatic Google Cloud CLI install is not supported on $(uname -s)."
+      return 1
+      ;;
+  esac
+  hash -r
+  if command -v gcloud >/dev/null 2>&1; then
+    ok "Installed gcloud CLI"
+    return 0
+  fi
+  warn "Install command finished, but gcloud is not on PATH yet."
+  echo "Open a new terminal or update PATH, then rerun: make setup"
+  return 1
 }
 
 load_existing_env() {
@@ -209,7 +338,16 @@ check_go() {
 
 check_gcloud() {
   if ! command -v gcloud >/dev/null 2>&1; then
-    warn "gcloud is not installed. Install Google Cloud SDK before verifying live Vertex access."
+    warn "gcloud is not installed. It is required for live Vertex verification and local ADC auth."
+    if [ "$INSTALL_GCLOUD" -eq 1 ] || confirm "Install Google Cloud CLI now?" "n"; then
+      if install_gcloud; then
+        check_gcloud
+        return
+      fi
+      warn "Continuing without gcloud. Live Vertex setup will not work until it is installed."
+      return
+    fi
+    warn "Skipped Google Cloud CLI install. Live Vertex setup will not work until gcloud is installed."
     return
   fi
   ok "gcloud CLI found"

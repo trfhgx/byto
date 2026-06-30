@@ -26,6 +26,9 @@ endif
 ifneq ($(filter 1 true yes,$(SKIP_TESTS)),)
 SETUP_ARGS += --skip-tests
 endif
+ifneq ($(filter 1 true yes,$(INSTALL_GCLOUD)),)
+SETUP_ARGS += --install-gcloud
+endif
 
 .PHONY: help setup run build test test-race test-live docker docker-prod clean fmt verify-gcp
 
@@ -45,6 +48,7 @@ help:
 	@echo "  API_KEY=...          Gateway API key"
 	@echo "  NON_INTERACTIVE=1    Use env/default values"
 	@echo "  SKIP_TESTS=1         Skip setup test run"
+	@echo "  INSTALL_GCLOUD=1     Install Google Cloud CLI if missing"
 
 setup:
 	@./setup.sh $(SETUP_ARGS)
