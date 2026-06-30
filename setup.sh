@@ -112,6 +112,10 @@ if [ -r /dev/tty ] && [ -w /dev/tty ]; then
   HAS_TTY=1
 fi
 
+SPINNER_FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
+CAPTURED_OUTPUT=""
+CAPTURE_TIMED_OUT=0
+
 step() {
   echo
   echo "${BOLD}${CYAN}$*${RESET}"
@@ -218,12 +222,11 @@ run_quiet() {
   local safe_label
   safe_label="$(printf '%s' "$label" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9_-')"
   local log="$SETUP_LOG_DIR/$(date +%Y%m%d%H%M%S)-$safe_label.log"
-  local frames=("|" "/" "-" "\\")
   local frame=0
   local status=0
 
   if [ -t 1 ]; then
-    printf '  %s %s' "${frames[$frame]}" "$label"
+    printf '  %s %s' "${SPINNER_FRAMES[$frame]}" "$label"
   else
     echo "RUN $label"
   fi
@@ -232,8 +235,8 @@ run_quiet() {
   local pid=$!
   while kill -0 "$pid" >/dev/null 2>&1; do
     if [ -t 1 ]; then
-      frame=$(((frame + 1) % 4))
-      printf '\r%s  %s %s' "$CLEAR_LINE" "${frames[$frame]}" "$label"
+      frame=$(((frame + 1) % ${#SPINNER_FRAMES[@]}))
+      printf '\r%s  %s %s' "$CLEAR_LINE" "${SPINNER_FRAMES[$frame]}" "$label"
     fi
     sleep 0.12
   done
@@ -258,6 +261,94 @@ run_quiet() {
     warn "$label failed"
   fi
   warn "Details saved to $log"
+  return "$status"
+}
+
+capture_quiet() {
+  local label="$1"
+  shift
+  mkdir -p "$SETUP_LOG_DIR"
+  local safe_label
+  safe_label="$(printf '%s' "$label" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9_-')"
+  local log="$SETUP_LOG_DIR/$(date +%Y%m%d%H%M%S)-$safe_label.log"
+  local out="$SETUP_LOG_DIR/$(date +%Y%m%d%H%M%S)-$safe_label.out"
+  local allow_failure="${CAPTURE_ALLOW_FAILURE:-0}"
+  local timeout_seconds="${CAPTURE_TIMEOUT_SECONDS:-0}"
+  local frame=0
+  local ticks=0
+  local max_ticks=0
+  local status=0
+
+  CAPTURED_OUTPUT=""
+  CAPTURE_TIMED_OUT=0
+  if [ "$timeout_seconds" -gt 0 ]; then
+    max_ticks=$((timeout_seconds * 8))
+  fi
+  if [ "$HAS_TTY" -eq 1 ]; then
+    printf '  %s %s' "${SPINNER_FRAMES[$frame]}" "$label" >/dev/tty
+  else
+    echo "RUN $label" >&2
+  fi
+
+  "$@" >"$out" 2>"$log" &
+  local pid=$!
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    if [ "$HAS_TTY" -eq 1 ]; then
+      frame=$(((frame + 1) % ${#SPINNER_FRAMES[@]}))
+      printf '\r%s  %s %s' "$CLEAR_LINE" "${SPINNER_FRAMES[$frame]}" "$label" >/dev/tty
+    fi
+    ticks=$((ticks + 1))
+    if [ "$max_ticks" -gt 0 ] && [ "$ticks" -ge "$max_ticks" ]; then
+      CAPTURE_TIMED_OUT=1
+      kill "$pid" >/dev/null 2>&1 || true
+      sleep 0.2
+      kill -KILL "$pid" >/dev/null 2>&1 || true
+      break
+    fi
+    sleep 0.12
+  done
+
+  if [ "$CAPTURE_TIMED_OUT" -eq 1 ]; then
+    wait "$pid" >/dev/null 2>&1 || true
+    status=124
+  else
+    set +e
+    wait "$pid"
+    status=$?
+    set -e
+  fi
+
+  if [ -f "$out" ]; then
+    CAPTURED_OUTPUT="$(cat "$out")"
+    rm -f "$out"
+  fi
+
+  if [ "$status" -eq 0 ]; then
+    if [ "$HAS_TTY" -eq 1 ]; then
+      printf '\r%s  %sOK%s %s\n' "$CLEAR_LINE" "$GREEN" "$RESET" "$label" >/dev/tty
+    else
+      ok "$label" >&2
+    fi
+    rm -f "$log"
+    return 0
+  fi
+
+  if [ "$allow_failure" -eq 1 ]; then
+    if [ "$HAS_TTY" -eq 1 ]; then
+      printf '\r%s  %sDONE%s %s\n' "$CLEAR_LINE" "$CYAN" "$RESET" "$label" >/dev/tty
+    else
+      echo "DONE $label" >&2
+    fi
+    rm -f "$log"
+    return "$status"
+  fi
+
+  if [ "$HAS_TTY" -eq 1 ]; then
+    printf '\r%s  %sERROR%s %s\n' "$CLEAR_LINE" "$RED" "$RESET" "$label" >/dev/tty
+  else
+    warn "$label failed" >&2
+  fi
+  warn "Details saved to $log" >&2
   return "$status"
 }
 
@@ -673,15 +764,19 @@ run_tests() {
 }
 
 active_gcloud_account() {
-  gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | head -n 1 || true
+  if CAPTURE_ALLOW_FAILURE=1 CAPTURE_TIMEOUT_SECONDS=5 capture_quiet "Active Google account check" gcloud auth list --filter=status:ACTIVE --format='value(account)'; then
+    printf '%s' "$CAPTURED_OUTPUT" | head -n 1
+  fi
 }
 
 configured_gcloud_project() {
-  gcloud config get-value project 2>/dev/null | head -n 1 || true
+  if CAPTURE_ALLOW_FAILURE=1 CAPTURE_TIMEOUT_SECONDS=5 capture_quiet "gcloud project check" gcloud config get-value project; then
+    printf '%s' "$CAPTURED_OUTPUT" | head -n 1
+  fi
 }
 
 adc_is_ready() {
-  gcloud auth application-default print-access-token >/dev/null 2>&1
+  CAPTURE_ALLOW_FAILURE=1 CAPTURE_TIMEOUT_SECONDS=5 capture_quiet "Application Default Credentials check" gcloud auth application-default print-access-token
 }
 
 authenticate_google_cloud() {
@@ -784,10 +879,17 @@ run_local_smoke_test() {
   api_key="$(first_api_key)"
   local base_url="http://localhost:$PORT"
 
-  echo "  Starting gateway temporarily on :$PORT"
+  echo "  Logs: $log"
   gateway_env go run ./cmd/gateway >"$log" 2>&1 &
   local pid=$!
   local ready=0
+  local frame=0
+
+  if [ -t 1 ]; then
+    printf '  %s Starting gateway on :%s' "${SPINNER_FRAMES[$frame]}" "$PORT"
+  else
+    echo "RUN Starting gateway on :$PORT"
+  fi
 
   for _ in $(seq 1 60); do
     if curl -fsS "$base_url/healthz" >/dev/null 2>&1; then
@@ -797,8 +899,20 @@ run_local_smoke_test() {
     if ! kill -0 "$pid" >/dev/null 2>&1; then
       break
     fi
+    if [ -t 1 ]; then
+      frame=$(((frame + 1) % ${#SPINNER_FRAMES[@]}))
+      printf '\r%s  %s Starting gateway on :%s' "$CLEAR_LINE" "${SPINNER_FRAMES[$frame]}" "$PORT"
+    fi
     sleep 0.2
   done
+
+  if [ -t 1 ]; then
+    if [ "$ready" -eq 1 ]; then
+      printf '\r%s  %sOK%s Gateway is listening on :%s\n' "$CLEAR_LINE" "$GREEN" "$RESET" "$PORT"
+    else
+      printf '\r%s  %sERROR%s Gateway did not become ready\n' "$CLEAR_LINE" "$RED" "$RESET"
+    fi
+  fi
 
   if [ "$ready" -ne 1 ]; then
     kill "$pid" >/dev/null 2>&1 || true
