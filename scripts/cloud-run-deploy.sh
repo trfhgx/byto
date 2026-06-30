@@ -25,4 +25,4 @@ gcloud run deploy "$SERVICE" \
   --region "$REGION" \
   --service-account "$SA_EMAIL" \
   --allow-unauthenticated \
-  --set-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$LOCATION,GATEWAY_API_KEYS=$GATEWAY_API_KEYS,DEFAULT_MODEL=${DEFAULT_MODEL:-gemini-3.1-pro-preview},ALLOWED_MODELS=${ALLOWED_MODELS:-gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3-flash-preview},ALLOW_ANY_GEMINI_MODEL=${ALLOW_ANY_GEMINI_MODEL:-false},VERTEX_BASE_URL=${VERTEX_BASE_URL:-https://aiplatform.googleapis.com},LOG_PATH=/tmp/requests.jsonl,REQUEST_TIMEOUT_SECONDS=${REQUEST_TIMEOUT_SECONDS:-180}"
+  --set-env-vars "GOOGLE_CLOUD_PROJECT=$PROJECT_ID,GOOGLE_CLOUD_LOCATION=$LOCATION,GATEWAY_API_KEYS=$GATEWAY_API_KEYS,ALLOWED_MODELS=${ALLOWED_MODELS:-gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3-flash-preview},ALLOW_ANY_GEMINI_MODEL=${ALLOW_ANY_GEMINI_MODEL:-false},VERTEX_BASE_URL=${VERTEX_BASE_URL:-https://aiplatform.googleapis.com},LOG_PATH=/tmp/requests.jsonl,REQUEST_TIMEOUT_SECONDS=${REQUEST_TIMEOUT_SECONDS:-180}"

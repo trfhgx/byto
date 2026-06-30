@@ -6,7 +6,7 @@ cd "$ROOT_DIR"
 
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-}"
 LOCATION="${GOOGLE_CLOUD_LOCATION:-global}"
-DEFAULT_MODEL="${DEFAULT_MODEL:-gemini-3.1-pro-preview}"
+VERIFY_MODEL="${VERIFY_MODEL:-}"
 ALLOWED_MODELS="${ALLOWED_MODELS:-gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3-flash-preview}"
 ALLOW_ANY_GEMINI_MODEL="${ALLOW_ANY_GEMINI_MODEL:-false}"
 API_KEYS="${GATEWAY_API_KEYS:-}"
@@ -31,7 +31,7 @@ Make options:
   PROJECT=PROJECT_ID       Google Cloud project ID.
   LOCATION=LOCATION        Vertex AI location, default: global.
   API_KEY=KEY              Gateway API key for local calls.
-  MODEL=MODEL              Default Gemini model.
+  VERIFY_MODEL=MODEL       Model used for setup verification/examples.
   NON_INTERACTIVE=1        Do not prompt; use env/default values.
   SKIP_TESTS=1             Do not run the local Go test suite.
   INSTALL_GCLOUD=1         Install Google Cloud CLI if missing.
@@ -59,7 +59,7 @@ while [ "$#" -gt 0 ]; do
       shift 2
       ;;
     --model)
-      DEFAULT_MODEL="${2:-}"
+      VERIFY_MODEL="${2:-}"
       shift 2
       ;;
     --non-interactive)
@@ -267,6 +267,70 @@ generate_key() {
   od -An -N32 -tx1 /dev/urandom | tr -d ' \n'
 }
 
+trim() {
+  local value="$1"
+  value="${value#"${value%%[![:space:]]*}"}"
+  value="${value%"${value##*[![:space:]]}"}"
+  printf '%s' "$value"
+}
+
+first_allowed_model() {
+  local first="${ALLOWED_MODELS%%,*}"
+  trim "$first"
+}
+
+first_api_key() {
+  local first="${API_KEYS%%,*}"
+  trim "$first"
+}
+
+choose_model() {
+  local title="${1:-Choose model}"
+  if [ -n "$VERIFY_MODEL" ]; then
+    printf '%s' "$VERIFY_MODEL"
+    return
+  fi
+
+  local models=()
+  local part
+  IFS=',' read -r -a models <<< "$ALLOWED_MODELS"
+  for i in "${!models[@]}"; do
+    models[$i]="$(trim "${models[$i]}")"
+  done
+
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    first_allowed_model
+    return
+  fi
+
+  local options=()
+  for part in "${models[@]}"; do
+    if [ -n "$part" ]; then
+      options+=("$part")
+    fi
+  done
+  options+=("Enter another Gemini model ID")
+
+  local choice
+  choice="$(select_menu "$title" 0 "${options[@]}")"
+  if [ "$choice" -eq "$((${#options[@]} - 1))" ]; then
+    prompt "Model ID" "$(first_allowed_model)"
+    return
+  fi
+  printf '%s' "${options[$choice]}"
+}
+
+run_foreground() {
+  local label="$1"
+  shift
+  if [ "$HAS_TTY" -ne 1 ]; then
+    fail "$label needs an interactive terminal."
+  fi
+  echo "  $label"
+  "$@" </dev/tty >/dev/tty 2>&1
+  ok "$label"
+}
+
 sudo_cmd() {
   if [ "$(id -u)" -eq 0 ]; then
     "$@"
@@ -395,7 +459,6 @@ load_existing_env() {
   set +a
   PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-$PROJECT_ID}"
   LOCATION="${GOOGLE_CLOUD_LOCATION:-$LOCATION}"
-  DEFAULT_MODEL="${DEFAULT_MODEL:-gemini-3.1-pro-preview}"
   ALLOWED_MODELS="${ALLOWED_MODELS:-$ALLOWED_MODELS}"
   ALLOW_ANY_GEMINI_MODEL="${ALLOW_ANY_GEMINI_MODEL:-$ALLOW_ANY_GEMINI_MODEL}"
   API_KEYS="${GATEWAY_API_KEYS:-$API_KEYS}"
@@ -421,7 +484,6 @@ GOOGLE_CLOUD_LOCATION=$LOCATION
 GATEWAY_API_KEYS=$API_KEYS
 
 # Model behavior: services should send real Gemini model IDs.
-DEFAULT_MODEL=$DEFAULT_MODEL
 ALLOWED_MODELS=$ALLOWED_MODELS
 ALLOW_ANY_GEMINI_MODEL=$ALLOW_ANY_GEMINI_MODEL
 
@@ -502,8 +564,164 @@ run_tests() {
   run_quiet "Local Go tests" env GOCACHE="${GOCACHE:-$ROOT_DIR/.cache/go-build}" go test ./... -count=1
 }
 
+authenticate_google_cloud() {
+  if ! command -v gcloud >/dev/null 2>&1; then
+    warn "Cannot authenticate Google Cloud because gcloud is not installed."
+    return 1
+  fi
+  if [ "$PROJECT_ID" = "your-project-id" ]; then
+    warn "Set a real PROJECT value before Google Cloud auth."
+    return 1
+  fi
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    warn "Skipped Google auth in non-interactive mode."
+    return 0
+  fi
+
+  local choice
+  choice="$(select_menu "Google Cloud auth:" 0 "Authenticate now" "Skip auth" "Abort setup")"
+  case "$choice" in
+    0)
+      run_foreground "Google account login" gcloud auth login
+      run_foreground "Application Default Credentials login" gcloud auth application-default login
+      run_quiet "Set gcloud project" gcloud config set project "$PROJECT_ID"
+      ;;
+    1)
+      warn "Skipped Google auth. Vertex verification may fail until you authenticate."
+      ;;
+    2)
+      fail "Setup aborted during Google auth."
+      ;;
+  esac
+}
+
+verify_vertex_access() {
+  if ! command -v gcloud >/dev/null 2>&1; then
+    warn "Cannot verify Vertex access because gcloud is not installed."
+    return 1
+  fi
+  local model
+  model="$(choose_model "Choose model to verify against Vertex:")"
+  run_quiet "Verify Vertex access ($model)" env \
+    GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
+    GOOGLE_CLOUD_LOCATION="$LOCATION" \
+    VERTEX_BASE_URL="$VERTEX_BASE_URL" \
+    ./scripts/verify-vertex.sh "$model"
+}
+
+gateway_env() {
+  env \
+    GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
+    GOOGLE_CLOUD_LOCATION="$LOCATION" \
+    GATEWAY_API_KEYS="$API_KEYS" \
+    ALLOWED_MODELS="$ALLOWED_MODELS" \
+    ALLOW_ANY_GEMINI_MODEL="$ALLOW_ANY_GEMINI_MODEL" \
+    MODEL_ALIASES="${MODEL_ALIASES:-}" \
+    VERTEX_BASE_URL="$VERTEX_BASE_URL" \
+    PORT="$PORT" \
+    LOG_PATH="$LOG_PATH" \
+    REQUEST_TIMEOUT_SECONDS="$REQUEST_TIMEOUT_SECONDS" \
+    "$@"
+}
+
+run_local_smoke_test() {
+  if ! command -v curl >/dev/null 2>&1; then
+    warn "curl is required for local smoke tests."
+    return 1
+  fi
+
+  mkdir -p "$SETUP_LOG_DIR"
+  local log="$SETUP_LOG_DIR/$(date +%Y%m%d%H%M%S)-gateway-smoke.log"
+  local api_key
+  api_key="$(first_api_key)"
+  local base_url="http://localhost:$PORT"
+
+  echo "  Starting gateway temporarily on :$PORT"
+  gateway_env go run ./cmd/gateway >"$log" 2>&1 &
+  local pid=$!
+  local ready=0
+
+  for _ in $(seq 1 60); do
+    if curl -fsS "$base_url/healthz" >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    if ! kill -0 "$pid" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.2
+  done
+
+  if [ "$ready" -ne 1 ]; then
+    kill "$pid" >/dev/null 2>&1 || true
+    warn "Gateway did not become ready. Details saved to $log"
+    return 1
+  fi
+
+  if ! curl -fsS "$base_url/healthz" >/dev/null; then
+    kill "$pid" >/dev/null 2>&1 || true
+    warn "Health check failed. Details saved to $log"
+    return 1
+  fi
+  if ! curl -fsS "$base_url/v1/models" -H "Authorization: Bearer $api_key" >/dev/null; then
+    kill "$pid" >/dev/null 2>&1 || true
+    warn "Model listing check failed. Details saved to $log"
+    return 1
+  fi
+  kill "$pid" >/dev/null 2>&1 || true
+  wait "$pid" >/dev/null 2>&1 || true
+  ok "Local gateway smoke test passed"
+}
+
+print_curl_example() {
+  local model
+  model="$(choose_model "Choose model for curl example:")"
+  local api_key
+  api_key="$(first_api_key)"
+  echo
+  echo "curl -s http://localhost:$PORT/v1/chat/completions \\"
+  echo "  -H \"Authorization: Bearer $api_key\" \\"
+  echo "  -H \"Content-Type: application/json\" \\"
+  echo "  -d '{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with only: ok\"}]}' | jq"
+}
+
+post_setup_actions() {
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    note "Run make setup without NON_INTERACTIVE=1 for guided auth, verification, and smoke-test actions."
+    return
+  fi
+
+  while true; do
+    local choice
+    choice="$(select_menu "What do you want to do now?" 0 \
+      "Verify Vertex model access" \
+      "Run local gateway smoke test" \
+      "Start gateway now" \
+      "Show curl example" \
+      "Finish")"
+    case "$choice" in
+      0)
+        verify_vertex_access || true
+        ;;
+      1)
+        run_local_smoke_test || true
+        ;;
+      2)
+        echo "Starting gateway. Press Ctrl-C to stop."
+        exec make run
+        ;;
+      3)
+        print_curl_example
+        ;;
+      4)
+        return
+        ;;
+    esac
+  done
+}
+
 step "Go LLM Gateway Setup"
-note "One path: make setup -> make verify-gcp -> make run"
+note "One path: make setup. The gateway requires every request to include a model."
 
 load_existing_env
 
@@ -516,7 +734,7 @@ if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "your-project-id" ]; then
   PROJECT_ID="$(prompt "Google Cloud project ID" "your-project-id")"
 fi
 LOCATION="$(prompt "Vertex AI location" "$LOCATION")"
-DEFAULT_MODEL="$(prompt "Default Gemini model" "$DEFAULT_MODEL")"
+ALLOWED_MODELS="$(prompt "Allowed Gemini models" "$ALLOWED_MODELS")"
 if [ -z "$API_KEYS" ] || [ "$API_KEYS" = "dev-local-key" ] || [ "$API_KEYS" = "dev-local-key-change-me" ]; then
   API_KEYS="$(generate_key)"
   ok "Generated local gateway API key"
@@ -528,24 +746,13 @@ if [ "$PROJECT_ID" = "your-project-id" ]; then
   warn ".env still uses the placeholder project ID. Edit GOOGLE_CLOUD_PROJECT before live Vertex calls."
 fi
 
+step "Google Cloud Auth"
+authenticate_google_cloud || true
+
 step "Running Local Verification"
 run_tests
 
-step "Next Commands"
-echo "1. Authenticate Google Cloud:"
-echo "   gcloud auth login && gcloud auth application-default login"
-echo "   gcloud config set project \"$PROJECT_ID\""
-echo
-echo "2. Verify Vertex model access:"
-echo "   make verify-gcp"
-echo
-echo "3. Start the gateway:"
-echo "   make run"
-echo
-echo "4. In another terminal, call it:"
-echo "   curl -s http://localhost:$PORT/v1/chat/completions \\"
-echo "     -H \"Authorization: Bearer $API_KEYS\" \\"
-echo "     -H \"Content-Type: application/json\" \\"
-echo "     -d '{\"model\":\"$DEFAULT_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with only: ok\"}]}' | jq"
-echo
+step "Setup Actions"
+post_setup_actions
+
 ok "Setup complete"

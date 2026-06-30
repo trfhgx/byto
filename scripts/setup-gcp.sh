@@ -59,7 +59,6 @@ cat > .env.generated <<EOF_ENV
 GOOGLE_CLOUD_PROJECT=$PROJECT_ID
 GOOGLE_CLOUD_LOCATION=$LOCATION
 GATEWAY_API_KEYS=dev-local-key-change-me
-DEFAULT_MODEL=gemini-3.1-pro-preview
 ALLOWED_MODELS=gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3-flash-preview
 ALLOW_ANY_GEMINI_MODEL=false
 VERTEX_BASE_URL=https://aiplatform.googleapis.com
@@ -70,4 +69,4 @@ EOF_ENV
 echo "Wrote .env.generated"
 echo "Service account: $SA_EMAIL"
 echo "Local auth: run 'gcloud auth application-default login'"
-echo "Verify: ./scripts/verify-vertex.sh gemini-3.1-pro-preview"
+echo "Verify: make verify-gcp MODEL=gemini-3.1-pro-preview"

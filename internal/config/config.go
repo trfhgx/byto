@@ -13,7 +13,6 @@ import (
 type Config struct {
 	Project               string            `json:"project"`
 	Location              string            `json:"location"`
-	DefaultModel          string            `json:"default_model"`
 	AllowedModels         []string          `json:"allowed_models"`
 	AllowAnyGeminiModel   bool              `json:"allow_any_gemini_model"`
 	ModelAliases          map[string]string `json:"model_aliases"`
@@ -44,7 +43,6 @@ func Load() (Config, error) {
 func defaults() Config {
 	return Config{
 		Location:              "global",
-		DefaultModel:          "gemini-3.1-pro-preview",
 		AllowedModels:         []string{"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview"},
 		AllowAnyGeminiModel:   false,
 		ModelAliases:          map[string]string{},
@@ -61,9 +59,6 @@ func overrideFromEnv(c *Config) {
 	}
 	if v := os.Getenv("GOOGLE_CLOUD_LOCATION"); v != "" {
 		c.Location = v
-	}
-	if v := os.Getenv("DEFAULT_MODEL"); v != "" {
-		c.DefaultModel = v
 	}
 	if v := os.Getenv("ALLOWED_MODELS"); v != "" {
 		c.AllowedModels = splitCSV(v)
@@ -96,9 +91,6 @@ func (c Config) Validate() error {
 	}
 	if c.Location == "" {
 		return errors.New("GOOGLE_CLOUD_LOCATION is required")
-	}
-	if c.DefaultModel == "" {
-		return errors.New("DEFAULT_MODEL is required")
 	}
 	if len(c.GatewayAPIKeys) == 0 {
 		return errors.New("GATEWAY_API_KEYS must contain at least one key")

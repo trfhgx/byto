@@ -31,6 +31,9 @@ func MessageText(m Message) (string, error) {
 }
 
 func ValidateRequest(req ChatCompletionRequest) error {
+	if strings.TrimSpace(req.Model) == "" {
+		return errors.New("model is required")
+	}
 	if len(req.Messages) == 0 {
 		return errors.New("messages is required")
 	}

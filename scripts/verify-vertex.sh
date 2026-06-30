@@ -1,13 +1,19 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODEL="${1:-${DEFAULT_MODEL:-gemini-3.1-pro-preview}}"
+MODEL="${1:-}"
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-}"
 LOCATION="${GOOGLE_CLOUD_LOCATION:-global}"
 BASE_URL="${VERTEX_BASE_URL:-https://aiplatform.googleapis.com}"
 
 if [ -z "$PROJECT_ID" ]; then
   echo "GOOGLE_CLOUD_PROJECT is required"
+  exit 1
+fi
+
+if [ -z "$MODEL" ]; then
+  echo "model argument is required"
+  echo "Usage: make verify-gcp MODEL=gemini-3.1-pro-preview"
   exit 1
 fi
 

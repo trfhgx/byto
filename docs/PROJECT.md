@@ -50,6 +50,8 @@ Calling services should send real Gemini/Vertex model IDs, for example:
 
 The gateway validates the model against `ALLOWED_MODELS`. Optional aliases exist, but they are disabled by default and should not be the main production path if you want services to explicitly choose models.
 
+There is no gateway default model. If a request omits `model`, the gateway returns an error. Model choice belongs to the calling service.
+
 ## Caching rule
 
 Vertex AI handles implicit caching automatically when prompt prefixes repeat. The gateway must not inject dynamic values such as request IDs, timestamps, app IDs, or trace IDs into the prompt body.

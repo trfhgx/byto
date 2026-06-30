@@ -30,7 +30,7 @@ func testServer(t *testing.T) *Server {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{Project: "p", Location: "global", DefaultModel: "gemini-3.1-pro-preview", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, RequestTimeoutSeconds: 5}
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, RequestTimeoutSeconds: 5}
 	return New(cfg, fakeGemini{}, logger)
 }
 
@@ -44,6 +44,20 @@ func TestChatCompletion(t *testing.T) {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "ok") {
+		t.Fatalf("body %s", w.Body.String())
+	}
+}
+
+func TestChatCompletionRequiresModel(t *testing.T) {
+	s := testServer(t)
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "model is required") {
 		t.Fatalf("body %s", w.Body.String())
 	}
 }

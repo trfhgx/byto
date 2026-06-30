@@ -26,7 +26,10 @@ func TestLiveVertexOptional(t *testing.T) {
 	}
 	ts := httptest.NewServer(s.Routes())
 	defer ts.Close()
-	payload := map[string]any{"model": cfg.DefaultModel, "messages": []map[string]string{{"role": "user", "content": "Reply with only: ok"}}}
+	if len(cfg.AllowedModels) == 0 {
+		t.Fatal("ALLOWED_MODELS must contain at least one model")
+	}
+	payload := map[string]any{"model": cfg.AllowedModels[0], "messages": []map[string]string{{"role": "user", "content": "Reply with only: ok"}}}
 	b, _ := json.Marshal(payload)
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat/completions", bytes.NewReader(b))
 	req.Header.Set("Authorization", "Bearer "+cfg.GatewayAPIKeys[0])

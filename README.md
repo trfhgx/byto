@@ -46,7 +46,7 @@ Each application should own its own business logic. This gateway only owns LLM p
 make setup PROJECT=your-project-id
 ```
 
-The setup flow checks Go, creates `.env`, generates a local gateway API key, runs the non-live test suite, and prints the exact verification/run/curl commands. Interactive setup uses a small arrow-key menu for optional Google Cloud CLI installation and keeps long package-manager/test output in `.cache/setup/` logs.
+The setup flow checks Go, offers to install `gcloud`, writes `.env`, can run Google auth, runs local tests, and then gives you an interactive action menu for Vertex verification, local smoke tests, starting the gateway, or printing a curl example. Long package-manager/test output is kept in `.cache/setup/` logs.
 
 You can also run it interactively:
 
@@ -72,16 +72,7 @@ The resulting `.env` contains:
 GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=global
 GATEWAY_API_KEYS=<generated-local-key>
-DEFAULT_MODEL=gemini-3.1-pro-preview
 ALLOWED_MODELS=gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3-flash-preview
-```
-
-Then authenticate locally:
-
-```bash
-gcloud auth login
-gcloud auth application-default login
-gcloud config set project "$GOOGLE_CLOUD_PROJECT"
 ```
 
 Run:
@@ -158,7 +149,7 @@ Some things cannot be reliably automated without your billing/org permissions:
 ## Verify Vertex model access
 
 ```bash
-./scripts/verify-vertex.sh gemini-3.1-pro-preview
+make verify-gcp MODEL=gemini-3.1-pro-preview
 ```
 
 Gemini 3.1 Pro Preview is available on global endpoints, so use:
@@ -286,7 +277,9 @@ Add `X-App-ID` from each product service to make logs easier to split by app.
 
 ## Model configuration
 
-By default, services send real model IDs. Example:
+Callers must send a model on every request. If `model` is missing or empty, the gateway returns a 400 error instead of choosing for you.
+
+The recommended path is to send real Gemini/Vertex model IDs. Example:
 
 ```json
 { "model": "gemini-3.1-pro-preview" }
@@ -311,6 +304,14 @@ MODEL_ALIASES=pro=gemini-3.1-pro-preview,tools=gemini-3.1-pro-preview-customtool
 ```
 
 Aliases are optional. The recommended production path is to send real model IDs from the calling service.
+
+Resolution order is:
+
+1. Reject empty `model`.
+2. If `model` matches `MODEL_ALIASES`, replace it with the configured Gemini model ID.
+3. Accept the resolved model if it is listed in `ALLOWED_MODELS`.
+4. If `ALLOW_ANY_GEMINI_MODEL=true`, accept any resolved model that starts with `gemini-`.
+5. Otherwise reject the request.
 
 ## Tests
 

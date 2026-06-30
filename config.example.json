@@ -1,7 +1,6 @@
 {
   "project": "your-project-id",
   "location": "global",
-  "default_model": "gemini-3.1-pro-preview",
   "allowed_models": [
     "gemini-3.1-pro-preview",
     "gemini-3.1-pro-preview-customtools",

@@ -22,6 +22,6 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
-	log.Printf("llm gateway listening on :%s project=%s location=%s default_model=%s", port, cfg.Project, cfg.Location, cfg.DefaultModel)
+	log.Printf("llm gateway listening on :%s project=%s location=%s", port, cfg.Project, cfg.Location)
 	log.Fatal(http.ListenAndServe(":"+port, srv.Routes()))
 }

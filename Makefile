@@ -14,8 +14,8 @@ endif
 ifneq ($(strip $(LOCATION)),)
 SETUP_ARGS += --location $(LOCATION)
 endif
-ifneq ($(strip $(MODEL)),)
-SETUP_ARGS += --model $(MODEL)
+ifneq ($(strip $(VERIFY_MODEL)),)
+SETUP_ARGS += --model $(VERIFY_MODEL)
 endif
 ifneq ($(strip $(API_KEY)),)
 SETUP_ARGS += --api-key $(API_KEY)
@@ -37,14 +37,14 @@ help:
 	@echo
 	@echo "Common commands:"
 	@echo "  make setup PROJECT=your-gcp-project"
-	@echo "  make verify-gcp"
+	@echo "  make verify-gcp MODEL=gemini-3.1-pro-preview"
 	@echo "  make run"
 	@echo "  make test"
 	@echo
 	@echo "Setup options:"
 	@echo "  PROJECT=...          Google Cloud project ID"
 	@echo "  LOCATION=global      Vertex AI location"
-	@echo "  MODEL=...            Default Gemini model"
+	@echo "  VERIFY_MODEL=...     Model used for setup verification/examples"
 	@echo "  API_KEY=...          Gateway API key"
 	@echo "  NON_INTERACTIVE=1    Use env/default values"
 	@echo "  SKIP_TESTS=1         Skip setup test run"
@@ -77,7 +77,8 @@ fmt:
 	gofmt -w cmd internal test
 
 verify-gcp:
-	./scripts/verify-vertex.sh $${DEFAULT_MODEL:-gemini-3.1-pro-preview}
+	@if [ -z "$(MODEL)" ]; then echo "MODEL is required, e.g. make verify-gcp MODEL=gemini-3.1-pro-preview"; exit 1; fi
+	./scripts/verify-vertex.sh "$(MODEL)"
 
 docker:
 	docker build -t $(APP_NAME):local .

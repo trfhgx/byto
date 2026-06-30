@@ -6,7 +6,6 @@ import (
 )
 
 type ModelResolver struct {
-	DefaultModel        string
 	AllowedModels       map[string]struct{}
 	AllowAnyGeminiModel bool
 	Aliases             map[string]string
@@ -21,13 +20,13 @@ func NewModelResolver(c Config) ModelResolver {
 	for k, v := range c.ModelAliases {
 		aliases[k] = v
 	}
-	return ModelResolver{DefaultModel: c.DefaultModel, AllowedModels: allowed, AllowAnyGeminiModel: c.AllowAnyGeminiModel, Aliases: aliases}
+	return ModelResolver{AllowedModels: allowed, AllowAnyGeminiModel: c.AllowAnyGeminiModel, Aliases: aliases}
 }
 
 func (r ModelResolver) Resolve(requested string) (string, error) {
 	m := strings.TrimSpace(requested)
 	if m == "" {
-		m = r.DefaultModel
+		return "", fmt.Errorf("model is required")
 	}
 	if resolved, ok := r.Aliases[m]; ok {
 		m = resolved

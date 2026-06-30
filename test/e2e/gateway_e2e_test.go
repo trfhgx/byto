@@ -39,7 +39,7 @@ func TestGatewayAgainstFakeVertex(t *testing.T) {
 	}))
 	defer fakeVertex.Close()
 
-	cfg := config.Config{Project: "test-project", Location: "global", DefaultModel: "gemini-3.1-pro-preview", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, VertexBaseURL: fakeVertex.URL, GatewayAPIKeys: []string{"test-key"}, LogPath: t.TempDir() + "/requests.jsonl", RequestTimeoutSeconds: 10}
+	cfg := config.Config{Project: "test-project", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, VertexBaseURL: fakeVertex.URL, GatewayAPIKeys: []string{"test-key"}, LogPath: t.TempDir() + "/requests.jsonl", RequestTimeoutSeconds: 10}
 	logger, err := gwlog.New(cfg.LogPath)
 	if err != nil {
 		t.Fatal(err)
