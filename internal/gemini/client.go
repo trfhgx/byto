@@ -90,7 +90,7 @@ func (c *Client) ListPublisherModels(ctx context.Context) ([]catalog.LiveModel, 
 	var out []catalog.LiveModel
 	pageToken := ""
 	for {
-		u := fmt.Sprintf("%s/v1beta1/publishers/google/models?pageSize=1000", c.baseURL)
+		u := fmt.Sprintf("%s/v1beta1/publishers/google/models?pageSize=300", c.baseURL)
 		if pageToken != "" {
 			u += "&pageToken=" + url.QueryEscape(pageToken)
 		}
@@ -99,6 +99,7 @@ func (c *Client) ListPublisherModels(ctx context.Context) ([]catalog.LiveModel, 
 			return nil, err
 		}
 		req.Header.Set("Authorization", "Bearer "+tok)
+		req.Header.Set("X-Goog-User-Project", c.project)
 		req.Header.Set("User-Agent", "go-llm-gateway/1.0")
 		resp, err := c.http.Do(req)
 		if err != nil {
@@ -156,6 +157,7 @@ func (c *Client) newRequest(ctx context.Context, model string, method string, bo
 	}
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Goog-User-Project", c.project)
 	req.Header.Set("User-Agent", "go-llm-gateway/1.0")
 	return req, nil
 }

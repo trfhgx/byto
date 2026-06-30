@@ -27,7 +27,8 @@ URL="$BASE_URL/v1/projects/$PROJECT_ID/locations/$LOCATION/publishers/google/mod
 echo "Calling Vertex model: $MODEL"
 echo "Location: $LOCATION"
 
-curl -sS -X POST "$URL" \
+curl -sS --fail-with-body -X POST "$URL" \
   -H "Authorization: Bearer $TOKEN" \
+  -H "X-Goog-User-Project: $PROJECT_ID" \
   -H "Content-Type: application/json" \
   -d '{"contents":[{"role":"user","parts":[{"text":"Reply with only: ok"}]}]}' | python3 -m json.tool

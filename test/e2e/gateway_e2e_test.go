@@ -28,6 +28,9 @@ func TestGatewayAgainstFakeVertex(t *testing.T) {
 		if r.Header.Get("Authorization") != "Bearer token" {
 			t.Fatalf("missing auth")
 		}
+		if r.Header.Get("X-Goog-User-Project") != "test-project" {
+			t.Fatalf("missing quota project header")
+		}
 		var req gemini.GenerateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)

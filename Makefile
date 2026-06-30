@@ -38,6 +38,7 @@ help:
 	@echo "Common commands:"
 	@echo "  make setup PROJECT=your-gcp-project"
 	@echo "  make verify-gcp MODEL=gemini-3.1-pro-preview"
+	@echo "  make test-live MODEL=gemini-2.5-flash"
 	@echo "  make run"
 	@echo "  make test"
 	@echo
@@ -71,7 +72,7 @@ test-race:
 
 test-live:
 	mkdir -p $(GO_BUILD_CACHE)
-	RUN_LIVE_VERTEX_TESTS=1 GOCACHE="$(GO_BUILD_CACHE)" go test ./test/e2e -count=1 -v
+	RUN_LIVE_VERTEX_TESTS=1 LIVE_VERTEX_MODEL="$(MODEL)" GOCACHE="$(GO_BUILD_CACHE)" go test ./test/e2e -count=1 -v
 
 fmt:
 	gofmt -w cmd internal test

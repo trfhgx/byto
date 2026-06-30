@@ -19,6 +19,7 @@ fi
 
 echo "Using project: $PROJECT_ID"
 gcloud config set project "$PROJECT_ID" >/dev/null
+gcloud auth application-default set-quota-project "$PROJECT_ID" >/dev/null || true
 
 echo "Enabling required APIs..."
 gcloud services enable \

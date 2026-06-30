@@ -367,6 +367,10 @@ trim() {
   printf '%s' "$value"
 }
 
+is_placeholder_project() {
+  [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "your-project-id" ] || [ "$PROJECT_ID" = "test-project" ]
+}
+
 catalog_models() {
   if [ -f "$MODEL_CATALOG_PATH" ]; then
     awk -F'"' '/"id"[[:space:]]*:/ {print $4}' "$MODEL_CATALOG_PATH" | paste -sd, -
@@ -779,12 +783,18 @@ adc_is_ready() {
   CAPTURE_ALLOW_FAILURE=1 CAPTURE_TIMEOUT_SECONDS=5 capture_quiet "Application Default Credentials check" gcloud auth application-default print-access-token
 }
 
+configure_google_cloud_project() {
+  run_quiet "Set gcloud project" gcloud config set project "$PROJECT_ID"
+  run_quiet "Set ADC quota project" gcloud auth application-default set-quota-project "$PROJECT_ID"
+  run_quiet "Enable Vertex AI API" gcloud services enable aiplatform.googleapis.com --project "$PROJECT_ID"
+}
+
 authenticate_google_cloud() {
   if ! command -v gcloud >/dev/null 2>&1; then
     warn "Cannot authenticate Google Cloud because gcloud is not installed."
     return 1
   fi
-  if [ "$PROJECT_ID" = "your-project-id" ]; then
+  if is_placeholder_project; then
     warn "Set a real PROJECT value before Google Cloud auth."
     return 1
   fi
@@ -818,7 +828,7 @@ authenticate_google_cloud() {
     0)
       run_foreground "Google account login" gcloud auth login
       run_foreground "Application Default Credentials login" gcloud auth application-default login
-      run_quiet "Set gcloud project" gcloud config set project "$PROJECT_ID"
+      configure_google_cloud_project
       if adc_is_ready; then
         ok "Application Default Credentials are available"
       else
@@ -826,7 +836,7 @@ authenticate_google_cloud() {
       fi
       ;;
     1)
-      run_quiet "Set gcloud project" gcloud config set project "$PROJECT_ID"
+      configure_google_cloud_project
       ;;
     2)
       warn "Skipped Google auth. Vertex verification may fail until you authenticate."
@@ -992,7 +1002,7 @@ check_go
 check_gcloud
 
 step "Configuring Local Environment"
-if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "your-project-id" ]; then
+if is_placeholder_project; then
   PROJECT_ID="$(prompt "Google Cloud project ID" "your-project-id")"
 fi
 LOCATION="$(prompt "Vertex AI location" "$LOCATION")"
@@ -1004,7 +1014,7 @@ fi
 
 write_env
 
-if [ "$PROJECT_ID" = "your-project-id" ]; then
+if is_placeholder_project; then
   warn ".env still uses the placeholder project ID. Edit GOOGLE_CLOUD_PROJECT before live Vertex calls."
 fi
 
