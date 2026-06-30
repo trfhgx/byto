@@ -48,9 +48,11 @@ Calling services should send real Gemini/Vertex model IDs, for example:
 }
 ```
 
-The gateway validates the model against `ALLOWED_MODELS`. Optional aliases exist, but they are disabled by default and should not be the main production path if you want services to explicitly choose models.
+The gateway validates the model against `config/models.json`. Optional aliases exist, but they are disabled by default and should not be the main production path if you want services to explicitly choose models.
 
 There is no gateway default model. If a request omits `model`, the gateway returns an error. Model choice belongs to the calling service.
+
+The model catalog carries per-model metadata such as enabled/available state, supported actions, and reasoning-effort tiers. On startup, the gateway can refresh that catalog in the background from Vertex publisher-model metadata and add newly discovered Gemini models as disabled entries for review.
 
 ## Caching rule
 

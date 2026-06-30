@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/example/go-llm-gateway/internal/auth"
+	"github.com/example/go-llm-gateway/internal/catalog"
 	"github.com/example/go-llm-gateway/internal/config"
 	"github.com/example/go-llm-gateway/internal/gemini"
 	gwlog "github.com/example/go-llm-gateway/internal/logging"
@@ -25,7 +26,7 @@ type GeminiClient interface {
 
 type Server struct {
 	cfg      config.Config
-	resolver config.ModelResolver
+	resolver *config.ModelResolver
 	gemini   GeminiClient
 	logger   *gwlog.JSONLLogger
 	apiKeys  map[string]struct{}
@@ -40,12 +41,47 @@ func New(cfg config.Config, gem GeminiClient, logger *gwlog.JSONLLogger) *Server
 }
 
 func NewFromConfig(cfg config.Config) (*Server, error) {
+	if cfg.ModelCatalogPath != "" {
+		if c, err := catalog.Load(cfg.ModelCatalogPath); err == nil {
+			cfg.AllowedModels = c.EnabledAvailableIDs()
+		} else if len(cfg.AllowedModels) == 0 {
+			return nil, fmt.Errorf("load model catalog: %w", err)
+		} else {
+			log.Printf("model catalog load warning path=%s err=%v", cfg.ModelCatalogPath, err)
+		}
+	}
 	logger, err := gwlog.New(cfg.LogPath)
 	if err != nil {
 		return nil, err
 	}
 	gem := gemini.NewClient(cfg, auth.NewDefaultTokenProvider())
-	return New(cfg, gem, logger), nil
+	s := New(cfg, gem, logger)
+	if cfg.ModelCatalogRefreshOnStart && cfg.ModelCatalogPath != "" {
+		go s.refreshModelCatalog(gem, cfg.ModelCatalogPath)
+	}
+	return s, nil
+}
+
+func (s *Server) refreshModelCatalog(gem *gemini.Client, path string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	live, err := gem.ListPublisherModels(ctx)
+	if err != nil {
+		log.Printf("model catalog refresh warning: %v", err)
+		return
+	}
+	c, err := catalog.Load(path)
+	if err != nil {
+		log.Printf("model catalog refresh load warning path=%s err=%v", path, err)
+		return
+	}
+	c.MergeLive(live)
+	if err := catalog.Save(path, c); err != nil {
+		log.Printf("model catalog refresh save warning path=%s err=%v", path, err)
+		return
+	}
+	s.resolver.SetAllowedModels(c.EnabledAvailableIDs())
+	log.Printf("model catalog refreshed path=%s live_models=%d enabled_available=%d", path, len(live), len(c.EnabledAvailableIDs()))
 }
 
 func (s *Server) Routes() http.Handler {

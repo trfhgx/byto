@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "updated_at": "2026-06-30T00:00:00Z",
+  "source": "seed",
+  "models": [
+    {
+      "id": "gemini-3-flash-preview",
+      "display_name": "Gemini 3 Flash Preview",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": true,
+      "available": true,
+      "capabilities": {
+        "reasoning_effort": ["low", "medium"],
+        "input": ["text"],
+        "output": ["text"],
+        "streaming": true,
+        "tools": false,
+        "json_mode": false
+      },
+      "notes": "Fast/low-latency profile. Review live Vertex metadata for production before relying on preview models."
+    },
+    {
+      "id": "gemini-3.1-pro-preview",
+      "display_name": "Gemini 3.1 Pro Preview",
+      "publisher": "google",
+      "family": "gemini-pro",
+      "enabled": true,
+      "available": true,
+      "capabilities": {
+        "reasoning_effort": ["low", "medium", "hard"],
+        "input": ["text"],
+        "output": ["text"],
+        "streaming": true,
+        "tools": false,
+        "json_mode": false
+      },
+      "notes": "Higher-reasoning profile. Review live Vertex metadata for production before relying on preview models."
+    },
+    {
+      "id": "gemini-3.1-pro-preview-customtools",
+      "display_name": "Gemini 3.1 Pro Preview Custom Tools",
+      "publisher": "google",
+      "family": "gemini-pro",
+      "enabled": true,
+      "available": true,
+      "capabilities": {
+        "reasoning_effort": ["low", "medium", "hard"],
+        "input": ["text"],
+        "output": ["text"],
+        "streaming": true,
+        "tools": true,
+        "json_mode": false
+      },
+      "notes": "Tool-oriented profile. Review live Vertex metadata for production before relying on preview models."
+    }
+  ]
+}

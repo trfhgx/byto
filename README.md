@@ -72,7 +72,8 @@ The resulting `.env` contains:
 GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=global
 GATEWAY_API_KEYS=<generated-local-key>
-ALLOWED_MODELS=gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3-flash-preview
+MODEL_CATALOG_PATH=config/models.json
+MODEL_CATALOG_REFRESH_ON_START=true
 ```
 
 Run:
@@ -285,11 +286,22 @@ The recommended path is to send real Gemini/Vertex model IDs. Example:
 { "model": "gemini-3.1-pro-preview" }
 ```
 
-Allowed models are configured through:
+The model list is configured through `config/models.json`. Each entry can carry operational metadata such as whether it is enabled, whether it was seen live, supported actions, and rough reasoning-effort tiers.
 
-```bash
-ALLOWED_MODELS=gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3-flash-preview
+```json
+{
+  "id": "gemini-3.1-pro-preview",
+  "enabled": true,
+  "available": true,
+  "capabilities": {
+    "reasoning_effort": ["low", "medium", "hard"],
+    "streaming": true,
+    "tools": false
+  }
+}
 ```
+
+On startup, the gateway loads enabled and available models from `MODEL_CATALOG_PATH`. If `MODEL_CATALOG_REFRESH_ON_START=true`, it starts a background Vertex publisher-model refresh. The refresh marks live availability and adds newly discovered Gemini models to the file as disabled entries for review.
 
 You can allow future Gemini model IDs without redeploying code:
 
@@ -309,7 +321,7 @@ Resolution order is:
 
 1. Reject empty `model`.
 2. If `model` matches `MODEL_ALIASES`, replace it with the configured Gemini model ID.
-3. Accept the resolved model if it is listed in `ALLOWED_MODELS`.
+3. Accept the resolved model if it is enabled and available in the model catalog.
 4. If `ALLOW_ANY_GEMINI_MODEL=true`, accept any resolved model that starts with `gemini-`.
 5. Otherwise reject the request.
 

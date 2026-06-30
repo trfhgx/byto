@@ -59,7 +59,8 @@ cat > .env.generated <<EOF_ENV
 GOOGLE_CLOUD_PROJECT=$PROJECT_ID
 GOOGLE_CLOUD_LOCATION=$LOCATION
 GATEWAY_API_KEYS=dev-local-key-change-me
-ALLOWED_MODELS=gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3-flash-preview
+MODEL_CATALOG_PATH=config/models.json
+MODEL_CATALOG_REFRESH_ON_START=true
 ALLOW_ANY_GEMINI_MODEL=false
 VERTEX_BASE_URL=https://aiplatform.googleapis.com
 LOG_PATH=logs/requests.jsonl

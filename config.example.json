@@ -1,11 +1,8 @@
 {
   "project": "your-project-id",
   "location": "global",
-  "allowed_models": [
-    "gemini-3.1-pro-preview",
-    "gemini-3.1-pro-preview-customtools",
-    "gemini-3-flash-preview"
-  ],
+  "model_catalog_path": "config/models.json",
+  "model_catalog_refresh_on_start": true,
   "allow_any_gemini_model": false,
   "model_aliases": {},
   "vertex_base_url": "https://aiplatform.googleapis.com",

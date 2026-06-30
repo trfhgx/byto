@@ -7,7 +7,9 @@ cd "$ROOT_DIR"
 PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-}"
 LOCATION="${GOOGLE_CLOUD_LOCATION:-global}"
 VERIFY_MODEL="${VERIFY_MODEL:-}"
-ALLOWED_MODELS="${ALLOWED_MODELS:-gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3-flash-preview}"
+MODEL_CATALOG_PATH="${MODEL_CATALOG_PATH:-config/models.json}"
+MODEL_CATALOG_REFRESH_ON_START="${MODEL_CATALOG_REFRESH_ON_START:-true}"
+ALLOWED_MODELS="${ALLOWED_MODELS:-}"
 ALLOW_ANY_GEMINI_MODEL="${ALLOW_ANY_GEMINI_MODEL:-false}"
 API_KEYS="${GATEWAY_API_KEYS:-}"
 VERTEX_BASE_URL="${VERTEX_BASE_URL:-https://aiplatform.googleapis.com}"
@@ -274,7 +276,18 @@ trim() {
   printf '%s' "$value"
 }
 
+catalog_models() {
+  if [ -f "$MODEL_CATALOG_PATH" ]; then
+    awk -F'"' '/"id"[[:space:]]*:/ {print $4}' "$MODEL_CATALOG_PATH" | paste -sd, -
+    return
+  fi
+  printf '%s' "$ALLOWED_MODELS"
+}
+
 first_allowed_model() {
+  if [ -z "$ALLOWED_MODELS" ]; then
+    ALLOWED_MODELS="$(catalog_models)"
+  fi
   local first="${ALLOWED_MODELS%%,*}"
   trim "$first"
 }
@@ -341,6 +354,43 @@ sudo_cmd() {
     return
   fi
   fail "This install step needs root privileges, but sudo is not available."
+}
+
+ensure_command_on_path() {
+  local cmd="$1"
+  shift
+  if command -v "$cmd" >/dev/null 2>&1; then
+    return 0
+  fi
+  local candidate
+  for candidate in "$@"; do
+    if [ -x "$candidate" ]; then
+      local dir
+      dir="$(dirname "$candidate")"
+      export PATH="$dir:$PATH"
+      ok "Added $dir to PATH for this setup run"
+      persist_path "$dir"
+      return 0
+    fi
+  done
+  return 1
+}
+
+persist_path() {
+  local dir="$1"
+  local shell_name
+  shell_name="$(basename "${SHELL:-}")"
+  local rc="$HOME/.profile"
+  case "$shell_name" in
+    zsh) rc="$HOME/.zshrc" ;;
+    bash) rc="$HOME/.bashrc" ;;
+  esac
+  local line="export PATH=\"$dir:\$PATH\""
+  if [ -f "$rc" ] && grep -F "$line" "$rc" >/dev/null 2>&1; then
+    return
+  fi
+  printf '\n# Added by go-llm-gateway setup for Google Cloud CLI\n%s\n' "$line" >> "$rc"
+  ok "Persisted $dir in $rc"
 }
 
 ensure_sudo_session() {
@@ -440,6 +490,13 @@ install_gcloud() {
       ;;
   esac
   hash -r
+  ensure_command_on_path gcloud \
+    "/opt/homebrew/bin/gcloud" \
+    "/usr/local/bin/gcloud" \
+    "/opt/google-cloud-cli/bin/gcloud" \
+    "$HOME/google-cloud-sdk/bin/gcloud" \
+    "/opt/homebrew/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/bin/gcloud" \
+    "/usr/local/Caskroom/google-cloud-sdk/latest/google-cloud-sdk/bin/gcloud" || true
   if command -v gcloud >/dev/null 2>&1; then
     ok "Installed gcloud CLI"
     return 0
@@ -459,6 +516,8 @@ load_existing_env() {
   set +a
   PROJECT_ID="${GOOGLE_CLOUD_PROJECT:-$PROJECT_ID}"
   LOCATION="${GOOGLE_CLOUD_LOCATION:-$LOCATION}"
+  MODEL_CATALOG_PATH="${MODEL_CATALOG_PATH:-$MODEL_CATALOG_PATH}"
+  MODEL_CATALOG_REFRESH_ON_START="${MODEL_CATALOG_REFRESH_ON_START:-$MODEL_CATALOG_REFRESH_ON_START}"
   ALLOWED_MODELS="${ALLOWED_MODELS:-$ALLOWED_MODELS}"
   ALLOW_ANY_GEMINI_MODEL="${ALLOW_ANY_GEMINI_MODEL:-$ALLOW_ANY_GEMINI_MODEL}"
   API_KEYS="${GATEWAY_API_KEYS:-$API_KEYS}"
@@ -483,8 +542,9 @@ GOOGLE_CLOUD_LOCATION=$LOCATION
 # Gateway auth: comma-separated API keys your apps use when calling this gateway.
 GATEWAY_API_KEYS=$API_KEYS
 
-# Model behavior: services should send real Gemini model IDs.
-ALLOWED_MODELS=$ALLOWED_MODELS
+# Model behavior: services must send real Gemini model IDs or configured aliases.
+MODEL_CATALOG_PATH=$MODEL_CATALOG_PATH
+MODEL_CATALOG_REFRESH_ON_START=$MODEL_CATALOG_REFRESH_ON_START
 ALLOW_ANY_GEMINI_MODEL=$ALLOW_ANY_GEMINI_MODEL
 
 # Optional aliases if you want them. Keep empty if you want strict real model names only.
@@ -614,7 +674,8 @@ gateway_env() {
     GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
     GOOGLE_CLOUD_LOCATION="$LOCATION" \
     GATEWAY_API_KEYS="$API_KEYS" \
-    ALLOWED_MODELS="$ALLOWED_MODELS" \
+    MODEL_CATALOG_PATH="$MODEL_CATALOG_PATH" \
+    MODEL_CATALOG_REFRESH_ON_START="$MODEL_CATALOG_REFRESH_ON_START" \
     ALLOW_ANY_GEMINI_MODEL="$ALLOW_ANY_GEMINI_MODEL" \
     MODEL_ALIASES="${MODEL_ALIASES:-}" \
     VERTEX_BASE_URL="$VERTEX_BASE_URL" \
@@ -734,7 +795,7 @@ if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "your-project-id" ]; then
   PROJECT_ID="$(prompt "Google Cloud project ID" "your-project-id")"
 fi
 LOCATION="$(prompt "Vertex AI location" "$LOCATION")"
-ALLOWED_MODELS="$(prompt "Allowed Gemini models" "$ALLOWED_MODELS")"
+MODEL_CATALOG_PATH="$(prompt "Model catalog path" "$MODEL_CATALOG_PATH")"
 if [ -z "$API_KEYS" ] || [ "$API_KEYS" = "dev-local-key" ] || [ "$API_KEYS" = "dev-local-key-change-me" ]; then
   API_KEYS="$(generate_key)"
   ok "Generated local gateway API key"

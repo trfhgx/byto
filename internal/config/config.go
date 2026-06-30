@@ -11,15 +11,17 @@ import (
 )
 
 type Config struct {
-	Project               string            `json:"project"`
-	Location              string            `json:"location"`
-	AllowedModels         []string          `json:"allowed_models"`
-	AllowAnyGeminiModel   bool              `json:"allow_any_gemini_model"`
-	ModelAliases          map[string]string `json:"model_aliases"`
-	VertexBaseURL         string            `json:"vertex_base_url"`
-	GatewayAPIKeys        []string          `json:"gateway_api_keys"`
-	LogPath               string            `json:"log_path"`
-	RequestTimeoutSeconds int               `json:"request_timeout_seconds"`
+	Project                    string            `json:"project"`
+	Location                   string            `json:"location"`
+	ModelCatalogPath           string            `json:"model_catalog_path"`
+	ModelCatalogRefreshOnStart bool              `json:"model_catalog_refresh_on_start"`
+	AllowedModels              []string          `json:"allowed_models"`
+	AllowAnyGeminiModel        bool              `json:"allow_any_gemini_model"`
+	ModelAliases               map[string]string `json:"model_aliases"`
+	VertexBaseURL              string            `json:"vertex_base_url"`
+	GatewayAPIKeys             []string          `json:"gateway_api_keys"`
+	LogPath                    string            `json:"log_path"`
+	RequestTimeoutSeconds      int               `json:"request_timeout_seconds"`
 }
 
 func Load() (Config, error) {
@@ -42,14 +44,15 @@ func Load() (Config, error) {
 
 func defaults() Config {
 	return Config{
-		Location:              "global",
-		AllowedModels:         []string{"gemini-3.1-pro-preview", "gemini-3.1-pro-preview-customtools", "gemini-3-flash-preview"},
-		AllowAnyGeminiModel:   false,
-		ModelAliases:          map[string]string{},
-		VertexBaseURL:         "https://aiplatform.googleapis.com",
-		GatewayAPIKeys:        []string{"dev-local-key"},
-		LogPath:               "logs/requests.jsonl",
-		RequestTimeoutSeconds: 180,
+		Location:                   "global",
+		ModelCatalogPath:           "config/models.json",
+		ModelCatalogRefreshOnStart: true,
+		AllowAnyGeminiModel:        false,
+		ModelAliases:               map[string]string{},
+		VertexBaseURL:              "https://aiplatform.googleapis.com",
+		GatewayAPIKeys:             []string{"dev-local-key"},
+		LogPath:                    "logs/requests.jsonl",
+		RequestTimeoutSeconds:      180,
 	}
 }
 
@@ -59,6 +62,12 @@ func overrideFromEnv(c *Config) {
 	}
 	if v := os.Getenv("GOOGLE_CLOUD_LOCATION"); v != "" {
 		c.Location = v
+	}
+	if v := os.Getenv("MODEL_CATALOG_PATH"); v != "" {
+		c.ModelCatalogPath = v
+	}
+	if v := os.Getenv("MODEL_CATALOG_REFRESH_ON_START"); v != "" {
+		c.ModelCatalogRefreshOnStart = strings.EqualFold(v, "true") || v == "1"
 	}
 	if v := os.Getenv("ALLOWED_MODELS"); v != "" {
 		c.AllowedModels = splitCSV(v)
