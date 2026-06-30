@@ -3,13 +3,17 @@ package openai
 import "encoding/json"
 
 type ChatCompletionRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Stream      bool      `json:"stream,omitempty"`
-	Temperature *float64  `json:"temperature,omitempty"`
-	TopP        *float64  `json:"top_p,omitempty"`
-	MaxTokens   *int      `json:"max_tokens,omitempty"`
-	ExtraBody   ExtraBody `json:"extra_body,omitempty"`
+	Model            string          `json:"model"`
+	Messages         []Message       `json:"messages"`
+	Stream           bool            `json:"stream,omitempty"`
+	Temperature      *float64        `json:"temperature,omitempty"`
+	TopP             *float64        `json:"top_p,omitempty"`
+	MaxTokens        *int            `json:"max_tokens,omitempty"`
+	FrequencyPenalty *float64        `json:"frequency_penalty,omitempty"`
+	PresencePenalty  *float64        `json:"presence_penalty,omitempty"`
+	Stop             json.RawMessage `json:"stop,omitempty"`
+	Seed             *int            `json:"seed,omitempty"`
+	ExtraBody        ExtraBody       `json:"extra_body,omitempty"`
 }
 
 type Message struct {
@@ -68,9 +72,29 @@ type ModelListResponse struct {
 }
 
 type ModelInfo struct {
-	ID      string `json:"id"`
-	Object  string `json:"object"`
-	OwnedBy string `json:"owned_by"`
+	ID                  string             `json:"id"`
+	Object              string             `json:"object"`
+	OwnedBy             string             `json:"owned_by"`
+	DisplayName         string             `json:"display_name,omitempty"`
+	Family              string             `json:"family,omitempty"`
+	Enabled             *bool              `json:"enabled,omitempty"`
+	Available           *bool              `json:"available,omitempty"`
+	LaunchStage         string             `json:"launch_stage,omitempty"`
+	VersionState        string             `json:"version_state,omitempty"`
+	SupportedActions    []string           `json:"supported_actions,omitempty"`
+	SupportedParameters []string           `json:"supported_parameters,omitempty"`
+	Capabilities        *ModelCapabilities `json:"capabilities,omitempty"`
+	Notes               string             `json:"notes,omitempty"`
+	LastSeenAt          string             `json:"last_seen_at,omitempty"`
+}
+
+type ModelCapabilities struct {
+	ReasoningEffort []string `json:"reasoning_effort,omitempty"`
+	Input           []string `json:"input,omitempty"`
+	Output          []string `json:"output,omitempty"`
+	Streaming       *bool    `json:"streaming,omitempty"`
+	Tools           *bool    `json:"tools,omitempty"`
+	JSONMode        *bool    `json:"json_mode,omitempty"`
 }
 
 type StreamChunk struct {

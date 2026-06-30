@@ -7,11 +7,19 @@ import (
 )
 
 func FromOpenAI(req openai.ChatCompletionRequest) (GenerateRequest, error) {
+	stopSequences, err := openai.StopSequences(req.Stop)
+	if err != nil {
+		return GenerateRequest{}, err
+	}
 	out := GenerateRequest{
 		GenerationConfig: &GenerationConfig{
-			Temperature:     req.Temperature,
-			TopP:            req.TopP,
-			MaxOutputTokens: req.MaxTokens,
+			Temperature:      req.Temperature,
+			TopP:             req.TopP,
+			MaxOutputTokens:  req.MaxTokens,
+			PresencePenalty:  req.PresencePenalty,
+			FrequencyPenalty: req.FrequencyPenalty,
+			StopSequences:    stopSequences,
+			Seed:             req.Seed,
 		},
 	}
 	if req.ExtraBody.Google.CachedContent != "" {

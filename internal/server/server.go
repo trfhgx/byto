@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/example/go-llm-gateway/internal/auth"
@@ -25,11 +27,13 @@ type GeminiClient interface {
 }
 
 type Server struct {
-	cfg      config.Config
-	resolver *config.ModelResolver
-	gemini   GeminiClient
-	logger   *gwlog.JSONLLogger
-	apiKeys  map[string]struct{}
+	cfg          config.Config
+	resolver     *config.ModelResolver
+	gemini       GeminiClient
+	logger       *gwlog.JSONLLogger
+	apiKeys      map[string]struct{}
+	catalogMu    sync.RWMutex
+	modelCatalog map[string]catalog.Model
 }
 
 func New(cfg config.Config, gem GeminiClient, logger *gwlog.JSONLLogger) *Server {
@@ -37,7 +41,13 @@ func New(cfg config.Config, gem GeminiClient, logger *gwlog.JSONLLogger) *Server
 	for _, k := range cfg.GatewayAPIKeys {
 		keys[k] = struct{}{}
 	}
-	return &Server{cfg: cfg, resolver: config.NewModelResolver(cfg), gemini: gem, logger: logger, apiKeys: keys}
+	s := &Server{cfg: cfg, resolver: config.NewModelResolver(cfg), gemini: gem, logger: logger, apiKeys: keys, modelCatalog: map[string]catalog.Model{}}
+	if cfg.ModelCatalogPath != "" {
+		if c, err := catalog.Load(cfg.ModelCatalogPath); err == nil {
+			s.setModelCatalog(c)
+		}
+	}
+	return s
 }
 
 func NewFromConfig(cfg config.Config) (*Server, error) {
@@ -80,6 +90,7 @@ func (s *Server) refreshModelCatalog(gem *gemini.Client, path string) {
 		log.Printf("model catalog refresh save warning path=%s err=%v", path, err)
 		return
 	}
+	s.setModelCatalog(c)
 	s.resolver.SetAllowedModels(c.EnabledAvailableIDs())
 	log.Printf("model catalog refreshed path=%s live_models=%d enabled_available=%d", path, len(live), len(c.EnabledAvailableIDs()))
 }
@@ -88,6 +99,7 @@ func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/v1/models", s.models)
+	mux.HandleFunc("/v1/models/", s.model)
 	mux.HandleFunc("/v1/chat/completions", s.chatCompletions)
 	return requestID(mux)
 }
@@ -97,6 +109,10 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed")
+		return
+	}
 	if !s.authorized(r) {
 		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid_api_key")
 		return
@@ -104,9 +120,35 @@ func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	models := s.resolver.ListModels()
 	data := make([]openai.ModelInfo, 0, len(models))
 	for _, m := range models {
-		data = append(data, openai.ModelInfo{ID: m, Object: "model", OwnedBy: "google"})
+		data = append(data, s.modelInfo(m))
 	}
 	writeJSON(w, http.StatusOK, openai.ModelListResponse{Object: "list", Data: data})
+}
+
+func (s *Server) model(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed")
+		return
+	}
+	if !s.authorized(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid_api_key")
+		return
+	}
+	id := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/v1/models/"))
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, http.StatusNotFound, "model not found", "not_found")
+		return
+	}
+	resolved, err := s.resolver.Resolve(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error(), "not_found")
+		return
+	}
+	info := s.modelInfo(resolved)
+	if resolved != id {
+		info.ID = id
+	}
+	writeJSON(w, http.StatusOK, info)
 }
 
 func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -231,6 +273,68 @@ func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID
 func sendSSE(w http.ResponseWriter, v any) {
 	b, _ := json.Marshal(v)
 	fmt.Fprintf(w, "data: %s\n\n", string(b))
+}
+
+func (s *Server) setModelCatalog(c catalog.Catalog) {
+	models := make(map[string]catalog.Model, len(c.Models))
+	for _, m := range c.Models {
+		if strings.TrimSpace(m.ID) != "" {
+			models[m.ID] = m
+		}
+	}
+	s.catalogMu.Lock()
+	s.modelCatalog = models
+	s.catalogMu.Unlock()
+}
+
+func (s *Server) modelInfo(id string) openai.ModelInfo {
+	info := openai.ModelInfo{ID: id, Object: "model", OwnedBy: "google"}
+	s.catalogMu.RLock()
+	m, ok := s.modelCatalog[id]
+	s.catalogMu.RUnlock()
+	if !ok {
+		return info
+	}
+	info.DisplayName = m.DisplayName
+	info.Family = m.Family
+	info.Enabled = boolPtr(m.Enabled)
+	info.Available = boolPtr(m.Available)
+	info.LaunchStage = m.LaunchStage
+	info.VersionState = m.VersionState
+	info.SupportedActions = append([]string(nil), m.SupportedActions...)
+	sort.Strings(info.SupportedActions)
+	info.SupportedParameters = append([]string(nil), m.Capabilities.GenerationParameters...)
+	sort.Strings(info.SupportedParameters)
+	caps := openai.ModelCapabilities{
+		ReasoningEffort: append([]string(nil), m.Capabilities.ReasoningEffort...),
+		Input:           append([]string(nil), m.Capabilities.Input...),
+		Output:          append([]string(nil), m.Capabilities.Output...),
+	}
+	if m.Capabilities.Streaming {
+		caps.Streaming = boolPtr(true)
+	}
+	if m.Capabilities.Tools {
+		caps.Tools = boolPtr(true)
+	}
+	if m.Capabilities.JSONMode {
+		caps.JSONMode = boolPtr(true)
+	}
+	if hasCapabilities(caps) {
+		info.Capabilities = &caps
+	}
+	info.Notes = m.Notes
+	if m.LastSeenAt != nil {
+		info.LastSeenAt = m.LastSeenAt.Format(time.RFC3339)
+	}
+	return info
+}
+
+func hasCapabilities(c openai.ModelCapabilities) bool {
+	return len(c.ReasoningEffort) > 0 || len(c.Input) > 0 || len(c.Output) > 0 || c.Streaming != nil || c.Tools != nil || c.JSONMode != nil
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func (s *Server) authorized(r *http.Request) bool {

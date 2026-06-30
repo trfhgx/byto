@@ -50,6 +50,7 @@ Every response includes `X-Request-ID`.
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | No | Health check. |
 | `GET` | `/v1/models` | Yes | Lists configured models. |
+| `GET` | `/v1/models/{model}` | Yes | Returns one configured model and known gateway/catalog metadata. |
 | `POST` | `/v1/chat/completions` | Yes | Creates a non-streaming or streaming chat completion. |
 
 ## `GET /healthz`
@@ -84,11 +85,71 @@ curl -s http://localhost:8080/v1/models \
     {
       "id": "gemini-2.5-flash",
       "object": "model",
-      "owned_by": "google"
+      "owned_by": "google",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_parameters": [
+        "model",
+        "messages",
+        "stream",
+        "temperature",
+        "top_p",
+        "max_tokens",
+        "frequency_penalty",
+        "presence_penalty",
+        "stop",
+        "seed"
+      ],
+      "capabilities": {
+        "input": ["text"],
+        "output": ["text"],
+        "streaming": true
+      }
     }
   ]
 }
 ```
+
+The OpenAI-compatible fields (`id`, `object`, `owned_by`) are always present. Extra fields are gateway extensions populated from `MODEL_CATALOG_PATH` when available.
+
+## `GET /v1/models/{model}`
+
+Returns one model plus catalog-backed metadata.
+
+### Request
+
+```bash
+curl -s http://localhost:8080/v1/models/gemini-2.5-flash \
+  -H "Authorization: Bearer <gateway-api-key>" | jq
+```
+
+### Response
+
+```json
+{
+  "id": "gemini-2.5-flash",
+  "object": "model",
+  "owned_by": "google",
+  "enabled": true,
+  "available": true,
+  "launch_stage": "GA",
+  "supported_parameters": [
+    "model",
+    "messages",
+    "max_tokens",
+    "stop"
+  ],
+  "capabilities": {
+    "reasoning_effort": ["low", "medium"],
+    "input": ["text"],
+    "output": ["text"],
+    "streaming": true
+  }
+}
+```
+
+`supported_parameters` means parameters this gateway is prepared to accept and map for that model. Google Vertex publisher-model metadata currently exposes model presence, launch stage, version state, and UI/actions metadata, but it does not return a per-model list of supported generation arguments such as `frequencyPenalty` or `responseSchema`. Keep per-model parameter notes in `config/models.json` after reviewing Google model docs and live behavior.
 
 ## `POST /v1/chat/completions`
 
@@ -106,7 +167,15 @@ Creates a chat completion using an explicit Gemini model ID.
 | `temperature` | number | No | Passed to Vertex `generationConfig.temperature`. |
 | `top_p` | number | No | Passed to Vertex `generationConfig.topP`. |
 | `max_tokens` | integer | No | Passed to Vertex `generationConfig.maxOutputTokens`. |
+| `frequency_penalty` | number | No | Passed to Vertex `generationConfig.frequencyPenalty`. |
+| `presence_penalty` | number | No | Passed to Vertex `generationConfig.presencePenalty`. |
+| `stop` | string or array | No | Passed to Vertex `generationConfig.stopSequences`. Empty strings are ignored. |
+| `seed` | integer | No | Passed to Vertex `generationConfig.seed`. |
 | `extra_body.google.cached_content` | string | No | Vertex cached content resource name. |
+
+Vertex `generationConfig` also documents fields such as `topK`, `candidateCount`, `responseMimeType`, `responseSchema`, `responseLogprobs`, `logprobs`, `audioTimestamp`, and `thinkingConfig`. This gateway only accepts the fields listed above in the OpenAI-compatible request body right now. Add new mappings deliberately because some Vertex fields need response-shape work (`candidateCount` / OpenAI `n`) or model-specific behavior (`thinkingConfig`, JSON schema).
+
+For Gemini 3 models, Google documents that sampling parameters (`temperature`, `topP`, and `topK`) are deprecated and recommends omitting them so the model controls sampling automatically.
 
 ### Message Content
 
@@ -146,6 +215,10 @@ curl -s http://localhost:8080/v1/chat/completions \
       { "role": "user", "content": "Reply with only: ok" }
     ],
     "temperature": 0.2,
+    "frequency_penalty": 0.1,
+    "presence_penalty": 0.1,
+    "stop": ["END"],
+    "seed": 7,
     "max_tokens": 32
   }' | jq
 ```
@@ -267,7 +340,20 @@ These OpenAI fields are not implemented in this version:
 - `tool_choice`
 - `response_format`
 - `n`
-- `stop`
-- `presence_penalty`
-- `frequency_penalty`
 - image, audio, or file content
+
+These Vertex-specific `generationConfig` fields are not mapped yet:
+
+- `topK`
+- `candidateCount`
+- `responseMimeType`
+- `responseSchema`
+- `responseLogprobs`
+- `logprobs`
+- `audioTimestamp`
+- `thinkingConfig`
+
+## Vertex References
+
+- [Vertex/Gemini generateContent REST reference](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.publishers.models/generateContent)
+- [Vertex AI Gemini inference examples and generationConfig shape](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference)

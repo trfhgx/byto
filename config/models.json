@@ -151,7 +151,20 @@
         "output": [
           "text"
         ],
-        "streaming": true
+        "streaming": true,
+        "generation_parameters": [
+          "model",
+          "messages",
+          "stream",
+          "temperature",
+          "top_p",
+          "max_tokens",
+          "frequency_penalty",
+          "presence_penalty",
+          "stop",
+          "seed",
+          "extra_body.google.cached_content"
+        ]
       },
       "notes": "Fast/low-latency profile. Review live Vertex metadata for production before relying on preview models.",
       "last_seen_at": "2026-06-30T17:34:09.780438Z"

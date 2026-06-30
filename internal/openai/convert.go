@@ -49,5 +49,32 @@ func ValidateRequest(req ChatCompletionRequest) error {
 			return fmt.Errorf("messages[%d].content: %w", i, err)
 		}
 	}
+	if _, err := StopSequences(req.Stop); err != nil {
+		return err
+	}
 	return nil
+}
+
+func StopSequences(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var one string
+	if err := json.Unmarshal(raw, &one); err == nil {
+		if one == "" {
+			return nil, nil
+		}
+		return []string{one}, nil
+	}
+	var many []string
+	if err := json.Unmarshal(raw, &many); err == nil {
+		out := make([]string, 0, len(many))
+		for _, s := range many {
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+		return out, nil
+	}
+	return nil, errors.New("stop must be a string or array of strings")
 }

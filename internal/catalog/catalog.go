@@ -32,12 +32,13 @@ type Model struct {
 }
 
 type Capabilities struct {
-	ReasoningEffort []string `json:"reasoning_effort,omitempty"`
-	Input           []string `json:"input,omitempty"`
-	Output          []string `json:"output,omitempty"`
-	Streaming       bool     `json:"streaming,omitempty"`
-	Tools           bool     `json:"tools,omitempty"`
-	JSONMode        bool     `json:"json_mode,omitempty"`
+	ReasoningEffort      []string `json:"reasoning_effort,omitempty"`
+	Input                []string `json:"input,omitempty"`
+	Output               []string `json:"output,omitempty"`
+	Streaming            bool     `json:"streaming,omitempty"`
+	Tools                bool     `json:"tools,omitempty"`
+	JSONMode             bool     `json:"json_mode,omitempty"`
+	GenerationParameters []string `json:"generation_parameters,omitempty"`
 }
 
 type LiveModel struct {

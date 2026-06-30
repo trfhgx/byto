@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -9,9 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/example/go-llm-gateway/internal/catalog"
 	"github.com/example/go-llm-gateway/internal/config"
 	"github.com/example/go-llm-gateway/internal/gemini"
 	gwlog "github.com/example/go-llm-gateway/internal/logging"
+	"github.com/example/go-llm-gateway/internal/openai"
 )
 
 type fakeGemini struct{}
@@ -80,6 +83,53 @@ func TestAllowUnauthenticated(t *testing.T) {
 	s.Routes().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+}
+
+func TestModelMetadataIncludesSupportedParameters(t *testing.T) {
+	dir := t.TempDir()
+	catalogPath := dir + "/models.json"
+	logPath := dir + "/requests.jsonl"
+	modelCatalog := catalog.Catalog{Version: 1, Models: []catalog.Model{{
+		ID:        "gemini-test",
+		Publisher: "google",
+		Enabled:   true,
+		Available: true,
+		Capabilities: catalog.Capabilities{
+			Streaming:            true,
+			GenerationParameters: []string{"max_tokens", "stop"},
+		},
+	}}}
+	b, err := json.Marshal(modelCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalogPath, b, 0644); err != nil {
+		t.Fatal(err)
+	}
+	logger, err := gwlog.New(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-test"}, ModelCatalogPath: catalogPath, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: logPath, RequestTimeoutSeconds: 5}
+	s := New(cfg, fakeGemini{}, logger)
+
+	req := httptest.NewRequest("GET", "/v1/models/gemini-test", nil)
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	var info openai.ModelInfo
+	if err := json.Unmarshal(w.Body.Bytes(), &info); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(info.SupportedParameters, ",") != "max_tokens,stop" {
+		t.Fatalf("supported parameters %#v", info.SupportedParameters)
+	}
+	if info.Capabilities == nil || info.Capabilities.Streaming == nil || !*info.Capabilities.Streaming {
+		t.Fatalf("streaming capability %#v", info.Capabilities)
 	}
 }
 
