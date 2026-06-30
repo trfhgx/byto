@@ -43,16 +43,29 @@ Each application should own its own business logic. This gateway only owns LLM p
 ## Quick local setup
 
 ```bash
-./setup.sh
-cp .env.example .env
+./setup.sh --project your-project-id
 ```
 
-Edit `.env`:
+The setup script checks Go, creates `.env`, generates a local gateway API key, runs the non-live test suite, and prints the exact verification/run/curl commands.
+
+You can also run it interactively:
+
+```bash
+./setup.sh
+```
+
+For CI or scripted setup:
+
+```bash
+./setup.sh --project your-project-id --non-interactive
+```
+
+The resulting `.env` contains:
 
 ```bash
 GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=global
-GATEWAY_API_KEYS=dev-local-key
+GATEWAY_API_KEYS=<generated-local-key>
 DEFAULT_MODEL=gemini-3.1-pro-preview
 ALLOWED_MODELS=gemini-3.1-pro-preview,gemini-3.1-pro-preview-customtools,gemini-3-flash-preview
 ```
@@ -70,6 +83,8 @@ Run:
 ```bash
 make run
 ```
+
+`make run` automatically loads `.env`.
 
 Test:
 

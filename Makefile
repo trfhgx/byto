@@ -1,6 +1,11 @@
 APP_NAME=llm-gateway
 BIN_DIR=bin
 
+ifneq (,$(wildcard .env))
+include .env
+export
+endif
+
 .PHONY: setup run build test test-race test-live docker docker-prod clean fmt verify-gcp
 
 setup:

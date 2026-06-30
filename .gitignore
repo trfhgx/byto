@@ -1,6 +1,8 @@
 .env
+.env.backup.*
 *.log
 logs/*.jsonl
 coverage.out
 bin/
+.cache/
 .DS_Store
