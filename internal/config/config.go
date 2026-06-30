@@ -11,17 +11,18 @@ import (
 )
 
 type Config struct {
-	Project                    string            `json:"project"`
-	Location                   string            `json:"location"`
-	ModelCatalogPath           string            `json:"model_catalog_path"`
-	ModelCatalogRefreshOnStart bool              `json:"model_catalog_refresh_on_start"`
-	AllowedModels              []string          `json:"allowed_models"`
-	AllowAnyGeminiModel        bool              `json:"allow_any_gemini_model"`
-	ModelAliases               map[string]string `json:"model_aliases"`
-	VertexBaseURL              string            `json:"vertex_base_url"`
-	GatewayAPIKeys             []string          `json:"gateway_api_keys"`
-	LogPath                    string            `json:"log_path"`
-	RequestTimeoutSeconds      int               `json:"request_timeout_seconds"`
+	Project                     string            `json:"project"`
+	Location                    string            `json:"location"`
+	ModelCatalogPath            string            `json:"model_catalog_path"`
+	ModelCatalogRefreshOnStart  bool              `json:"model_catalog_refresh_on_start"`
+	AllowedModels               []string          `json:"allowed_models"`
+	AllowAnyGeminiModel         bool              `json:"allow_any_gemini_model"`
+	ModelAliases                map[string]string `json:"model_aliases"`
+	VertexBaseURL               string            `json:"vertex_base_url"`
+	GatewayAPIKeys              []string          `json:"gateway_api_keys"`
+	GatewayAllowUnauthenticated bool              `json:"gateway_allow_unauthenticated"`
+	LogPath                     string            `json:"log_path"`
+	RequestTimeoutSeconds       int               `json:"request_timeout_seconds"`
 }
 
 func Load() (Config, error) {
@@ -81,8 +82,11 @@ func overrideFromEnv(c *Config) {
 	if v := os.Getenv("VERTEX_BASE_URL"); v != "" {
 		c.VertexBaseURL = strings.TrimRight(v, "/")
 	}
-	if v := os.Getenv("GATEWAY_API_KEYS"); v != "" {
+	if v, ok := os.LookupEnv("GATEWAY_API_KEYS"); ok {
 		c.GatewayAPIKeys = splitCSV(v)
+	}
+	if v := os.Getenv("GATEWAY_ALLOW_UNAUTHENTICATED"); v != "" {
+		c.GatewayAllowUnauthenticated = strings.EqualFold(v, "true") || v == "1"
 	}
 	if v := os.Getenv("LOG_PATH"); v != "" {
 		c.LogPath = v
@@ -101,8 +105,8 @@ func (c Config) Validate() error {
 	if c.Location == "" {
 		return errors.New("GOOGLE_CLOUD_LOCATION is required")
 	}
-	if len(c.GatewayAPIKeys) == 0 {
-		return errors.New("GATEWAY_API_KEYS must contain at least one key")
+	if !c.GatewayAllowUnauthenticated && len(c.GatewayAPIKeys) == 0 {
+		return errors.New("GATEWAY_API_KEYS must contain at least one key unless GATEWAY_ALLOW_UNAUTHENTICATED=true")
 	}
 	if c.VertexBaseURL == "" {
 		return errors.New("VERTEX_BASE_URL is required")

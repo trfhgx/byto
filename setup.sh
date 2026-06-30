@@ -12,6 +12,7 @@ MODEL_CATALOG_REFRESH_ON_START="${MODEL_CATALOG_REFRESH_ON_START:-true}"
 ALLOWED_MODELS="${ALLOWED_MODELS:-}"
 ALLOW_ANY_GEMINI_MODEL="${ALLOW_ANY_GEMINI_MODEL:-false}"
 API_KEYS="${GATEWAY_API_KEYS:-}"
+GATEWAY_ALLOW_UNAUTHENTICATED="${GATEWAY_ALLOW_UNAUTHENTICATED:-false}"
 VERTEX_BASE_URL="${VERTEX_BASE_URL:-https://aiplatform.googleapis.com}"
 PORT="${PORT:-8080}"
 LOG_PATH="${LOG_PATH:-logs/requests.jsonl}"
@@ -19,6 +20,8 @@ REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS:-180}"
 NON_INTERACTIVE=0
 SKIP_TESTS=0
 INSTALL_GCLOUD=0
+FORCE_OPEN_AUTH=0
+FORCE_PROTECTED_AUTH=0
 SETUP_LOG_DIR="$ROOT_DIR/.cache/setup"
 HAS_TTY=0
 
@@ -37,12 +40,16 @@ Make options:
   NON_INTERACTIVE=1        Do not prompt; use env/default values.
   SKIP_TESTS=1             Do not run the local Go test suite.
   INSTALL_GCLOUD=1         Install Google Cloud CLI if missing.
+  OPEN=1                   Write open gateway auth; no API key required.
+  PROTECTED=1              Write protected gateway auth; API key required.
 
 Examples:
   make setup
   make setup PROJECT=my-gcp-project
   make setup PROJECT=my-gcp-project INSTALL_GCLOUD=1
   make setup PROJECT=my-gcp-project NON_INTERACTIVE=1
+  make setup PROJECT=my-gcp-project OPEN=1
+  make setup PROJECT=my-gcp-project PROTECTED=1
 EOF
 }
 
@@ -58,6 +65,8 @@ while [ "$#" -gt 0 ]; do
       ;;
     --api-key)
       API_KEYS="${2:-}"
+      GATEWAY_ALLOW_UNAUTHENTICATED=false
+      FORCE_PROTECTED_AUTH=1
       shift 2
       ;;
     --model)
@@ -74,6 +83,17 @@ while [ "$#" -gt 0 ]; do
       ;;
     --install-gcloud)
       INSTALL_GCLOUD=1
+      shift
+      ;;
+    --open)
+      GATEWAY_ALLOW_UNAUTHENTICATED=true
+      API_KEYS=""
+      FORCE_OPEN_AUTH=1
+      shift
+      ;;
+    --protected)
+      GATEWAY_ALLOW_UNAUTHENTICATED=false
+      FORCE_PROTECTED_AUTH=1
       shift
       ;;
     -h|--help)
@@ -392,6 +412,71 @@ first_api_key() {
   trim "$first"
 }
 
+copy_to_clipboard() {
+  local value="$1"
+  if [ -z "$value" ]; then
+    return 1
+  fi
+  if command -v pbcopy >/dev/null 2>&1; then
+    printf '%s' "$value" | pbcopy
+    return 0
+  fi
+  if command -v wl-copy >/dev/null 2>&1; then
+    printf '%s' "$value" | wl-copy
+    return 0
+  fi
+  if command -v xclip >/dev/null 2>&1; then
+    printf '%s' "$value" | xclip -selection clipboard
+    return 0
+  fi
+  if command -v clip.exe >/dev/null 2>&1; then
+    printf '%s' "$value" | clip.exe
+    return 0
+  fi
+  return 1
+}
+
+configure_gateway_auth() {
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    if [ "$GATEWAY_ALLOW_UNAUTHENTICATED" = "true" ] || [ "$GATEWAY_ALLOW_UNAUTHENTICATED" = "1" ]; then
+      GATEWAY_ALLOW_UNAUTHENTICATED=true
+      API_KEYS=""
+      warn "Gateway auth is open because GATEWAY_ALLOW_UNAUTHENTICATED=true"
+      return
+    fi
+    GATEWAY_ALLOW_UNAUTHENTICATED=false
+  else
+    local default_choice=0
+    if [ "$GATEWAY_ALLOW_UNAUTHENTICATED" = "true" ] || [ "$GATEWAY_ALLOW_UNAUTHENTICATED" = "1" ]; then
+      default_choice=1
+    fi
+    local choice
+    choice="$(select_menu "Gateway access:" "$default_choice" "Protect with API key" "Open access, no gateway API key")"
+    if [ "$choice" -eq 1 ]; then
+      GATEWAY_ALLOW_UNAUTHENTICATED=true
+      API_KEYS=""
+      warn "Gateway will accept /v1 requests without Authorization. Use only behind a private boundary."
+      return
+    fi
+    GATEWAY_ALLOW_UNAUTHENTICATED=false
+  fi
+
+  if [ -z "$API_KEYS" ] || [ "$API_KEYS" = "dev-local-key" ] || [ "$API_KEYS" = "dev-local-key-change-me" ]; then
+    API_KEYS="$(generate_key)"
+    ok "Generated gateway API key"
+  else
+    ok "Using existing gateway API key"
+  fi
+
+  local api_key
+  api_key="$(first_api_key)"
+  if copy_to_clipboard "$api_key"; then
+    ok "Copied gateway API key to clipboard"
+  else
+    warn "Could not copy API key to clipboard on this OS. It is written in .env."
+  fi
+}
+
 choose_model() {
   local title="${1:-Choose model}"
   if [ -n "$VERIFY_MODEL" ]; then
@@ -659,6 +744,14 @@ load_existing_env() {
   ALLOWED_MODELS="${ALLOWED_MODELS:-$ALLOWED_MODELS}"
   ALLOW_ANY_GEMINI_MODEL="${ALLOW_ANY_GEMINI_MODEL:-$ALLOW_ANY_GEMINI_MODEL}"
   API_KEYS="${GATEWAY_API_KEYS:-$API_KEYS}"
+  GATEWAY_ALLOW_UNAUTHENTICATED="${GATEWAY_ALLOW_UNAUTHENTICATED:-$GATEWAY_ALLOW_UNAUTHENTICATED}"
+  if [ "$FORCE_OPEN_AUTH" -eq 1 ]; then
+    GATEWAY_ALLOW_UNAUTHENTICATED=true
+    API_KEYS=""
+  fi
+  if [ "$FORCE_PROTECTED_AUTH" -eq 1 ]; then
+    GATEWAY_ALLOW_UNAUTHENTICATED=false
+  fi
   VERTEX_BASE_URL="${VERTEX_BASE_URL:-$VERTEX_BASE_URL}"
   PORT="${PORT:-$PORT}"
   LOG_PATH="${LOG_PATH:-$LOG_PATH}"
@@ -677,8 +770,9 @@ write_env() {
 GOOGLE_CLOUD_PROJECT=$PROJECT_ID
 GOOGLE_CLOUD_LOCATION=$LOCATION
 
-# Gateway auth: comma-separated API keys your apps use when calling this gateway.
+# Gateway auth.
 GATEWAY_API_KEYS=$API_KEYS
+GATEWAY_ALLOW_UNAUTHENTICATED=$GATEWAY_ALLOW_UNAUTHENTICATED
 
 # Model behavior: services must send real Gemini model IDs or configured aliases.
 MODEL_CATALOG_PATH=$MODEL_CATALOG_PATH
@@ -866,6 +960,7 @@ gateway_env() {
     GOOGLE_CLOUD_PROJECT="$PROJECT_ID" \
     GOOGLE_CLOUD_LOCATION="$LOCATION" \
     GATEWAY_API_KEYS="$API_KEYS" \
+    GATEWAY_ALLOW_UNAUTHENTICATED="$GATEWAY_ALLOW_UNAUTHENTICATED" \
     MODEL_CATALOG_PATH="$MODEL_CATALOG_PATH" \
     MODEL_CATALOG_REFRESH_ON_START="$MODEL_CATALOG_REFRESH_ON_START" \
     ALLOW_ANY_GEMINI_MODEL="$ALLOW_ANY_GEMINI_MODEL" \
@@ -885,8 +980,6 @@ run_local_smoke_test() {
 
   mkdir -p "$SETUP_LOG_DIR"
   local log="$SETUP_LOG_DIR/$(date +%Y%m%d%H%M%S)-gateway-smoke.log"
-  local api_key
-  api_key="$(first_api_key)"
   local base_url="http://localhost:$PORT"
 
   echo "  Logs: $log"
@@ -935,7 +1028,13 @@ run_local_smoke_test() {
     warn "Health check failed. Details saved to $log"
     return 1
   fi
-  if ! curl -fsS "$base_url/v1/models" -H "Authorization: Bearer $api_key" >/dev/null; then
+  local curl_args=(-fsS "$base_url/v1/models")
+  if [ "$GATEWAY_ALLOW_UNAUTHENTICATED" != "true" ]; then
+    local api_key
+    api_key="$(first_api_key)"
+    curl_args+=(-H "Authorization: Bearer $api_key")
+  fi
+  if ! curl "${curl_args[@]}" >/dev/null; then
     kill "$pid" >/dev/null 2>&1 || true
     warn "Model listing check failed. Details saved to $log"
     return 1
@@ -952,7 +1051,9 @@ print_curl_example() {
   api_key="$(first_api_key)"
   echo
   echo "curl -s http://localhost:$PORT/v1/chat/completions \\"
-  echo "  -H \"Authorization: Bearer $api_key\" \\"
+  if [ "$GATEWAY_ALLOW_UNAUTHENTICATED" != "true" ]; then
+    echo "  -H \"Authorization: Bearer $api_key\" \\"
+  fi
   echo "  -H \"Content-Type: application/json\" \\"
   echo "  -d '{\"model\":\"$model\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with only: ok\"}]}' | jq"
 }
@@ -1007,10 +1108,7 @@ if is_placeholder_project; then
 fi
 LOCATION="$(prompt "Vertex AI location" "$LOCATION")"
 MODEL_CATALOG_PATH="$(prompt "Model catalog path" "$MODEL_CATALOG_PATH")"
-if [ -z "$API_KEYS" ] || [ "$API_KEYS" = "dev-local-key" ] || [ "$API_KEYS" = "dev-local-key-change-me" ]; then
-  API_KEYS="$(generate_key)"
-  ok "Generated local gateway API key"
-fi
+configure_gateway_auth
 
 write_env
 

@@ -10,7 +10,7 @@ http://localhost:8080
 
 ## Authentication
 
-All `/v1/*` endpoints require a service API key:
+By default, all `/v1/*` endpoints require a service API key:
 
 ```http
 Authorization: Bearer <gateway-api-key>
@@ -22,13 +22,22 @@ Configure valid keys with:
 GATEWAY_API_KEYS=key-one,key-two
 ```
 
+To intentionally run open behind another access layer, set:
+
+```bash
+GATEWAY_ALLOW_UNAUTHENTICATED=true
+GATEWAY_API_KEYS=
+```
+
+Open mode disables Byto's bearer-token check for `/v1/*`. Keep it behind private networking, Cloud Run IAM, or another trusted gateway.
+
 `GET /healthz` does not require authentication.
 
 ## Common Headers
 
 | Header | Required | Description |
 | --- | --- | --- |
-| `Authorization` | Yes for `/v1/*` | `Bearer <gateway-api-key>`. |
+| `Authorization` | Yes for `/v1/*` unless open mode is enabled | `Bearer <gateway-api-key>`. |
 | `Content-Type` | Yes for JSON requests | Use `application/json`. |
 | `X-Request-ID` | No | Request ID to echo back. Byto generates one if omitted. |
 | `X-App-ID` | No | App/service name written to request logs. |

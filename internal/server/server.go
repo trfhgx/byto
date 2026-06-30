@@ -234,6 +234,9 @@ func sendSSE(w http.ResponseWriter, v any) {
 }
 
 func (s *Server) authorized(r *http.Request) bool {
+	if s.cfg.GatewayAllowUnauthenticated {
+		return true
+	}
 	authz := r.Header.Get("Authorization")
 	if !strings.HasPrefix(authz, "Bearer ") {
 		return false

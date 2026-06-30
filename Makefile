@@ -30,6 +30,12 @@ endif
 ifneq ($(filter 1 true yes,$(INSTALL_GCLOUD)),)
 SETUP_ARGS += --install-gcloud
 endif
+ifneq ($(filter 1 true yes,$(OPEN)),)
+SETUP_ARGS += --open
+endif
+ifneq ($(filter 1 true yes,$(PROTECTED)),)
+SETUP_ARGS += --protected
+endif
 
 CLOUD_SETUP_ARGS=
 ifneq ($(strip $(PROJECT)),)
@@ -61,6 +67,8 @@ help:
 	@echo
 	@echo "Use one of these:"
 	@echo "  make setup PROJECT=your-gcp-project"
+	@echo "  make setup PROJECT=your-gcp-project OPEN=1"
+	@echo "  make setup PROJECT=your-gcp-project PROTECTED=1"
 	@echo "  make setup-cloud PROJECT=your-gcp-project MODEL=gemini-2.5-flash"
 	@echo
 	@echo "Then:"

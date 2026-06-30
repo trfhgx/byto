@@ -72,6 +72,17 @@ func TestUnauthorized(t *testing.T) {
 	}
 }
 
+func TestAllowUnauthenticated(t *testing.T) {
+	s := testServer(t)
+	s.cfg.GatewayAllowUnauthenticated = true
+	req := httptest.NewRequest("GET", "/v1/models", nil)
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+}
+
 func TestPersistentLog(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/requests.jsonl"

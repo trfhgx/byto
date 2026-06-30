@@ -7,6 +7,7 @@
   "model_aliases": {},
   "vertex_base_url": "https://aiplatform.googleapis.com",
   "gateway_api_keys": ["dev-local-key"],
+  "gateway_allow_unauthenticated": false,
   "log_path": "logs/requests.jsonl",
   "request_timeout_seconds": 180
 }
