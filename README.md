@@ -46,7 +46,7 @@ Each application should own its own business logic. This gateway only owns LLM p
 make setup PROJECT=your-project-id
 ```
 
-The setup script checks Go, creates `.env`, generates a local gateway API key, runs the non-live test suite, and prints the exact verification/run/curl commands.
+The setup flow checks Go, creates `.env`, generates a local gateway API key, runs the non-live test suite, and prints the exact verification/run/curl commands. Interactive setup uses a small arrow-key menu for optional Google Cloud CLI installation and keeps long package-manager/test output in `.cache/setup/` logs.
 
 You can also run it interactively:
 

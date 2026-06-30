@@ -17,6 +17,7 @@ REQUEST_TIMEOUT_SECONDS="${REQUEST_TIMEOUT_SECONDS:-180}"
 NON_INTERACTIVE=0
 SKIP_TESTS=0
 INSTALL_GCLOUD=0
+SETUP_LOG_DIR="$ROOT_DIR/.cache/setup"
 
 usage() {
   cat <<'EOF'
@@ -86,21 +87,27 @@ done
 
 if [ -t 1 ]; then
   BOLD="$(printf '\033[1m')"
+  DIM="$(printf '\033[2m')"
   GREEN="$(printf '\033[32m')"
   YELLOW="$(printf '\033[33m')"
   RED="$(printf '\033[31m')"
+  CYAN="$(printf '\033[36m')"
   RESET="$(printf '\033[0m')"
+  CLEAR_LINE="$(printf '\033[2K')"
 else
   BOLD=""
+  DIM=""
   GREEN=""
   YELLOW=""
   RED=""
+  CYAN=""
   RESET=""
+  CLEAR_LINE=""
 fi
 
 step() {
   echo
-  echo "${BOLD}==> $*${RESET}"
+  echo "${BOLD}${CYAN}$*${RESET}"
 }
 
 ok() {
@@ -114,6 +121,10 @@ warn() {
 fail() {
   echo "${RED}ERROR${RESET} $*" >&2
   exit 1
+}
+
+note() {
+  echo "${DIM}$*${RESET}"
 }
 
 prompt() {
@@ -131,20 +142,110 @@ prompt() {
   printf '%s' "$value"
 }
 
-confirm() {
-  local label="$1"
-  local default="${2:-n}"
-  local value=""
-  if [ "$NON_INTERACTIVE" -eq 1 ]; then
-    [ "$default" = "y" ]
+select_menu() {
+  local title="$1"
+  shift
+  local selected="$1"
+  shift
+  local options=("$@")
+  local key=""
+  local i
+
+  if [ "$NON_INTERACTIVE" -eq 1 ] || [ ! -t 0 ] || [ ! -t 1 ]; then
+    printf '%s' "$selected"
     return
   fi
-  read -r -p "$label [$default]: " value
-  value="${value:-$default}"
-  case "$value" in
-    y|Y|yes|YES|Yes) return 0 ;;
-    *) return 1 ;;
-  esac
+
+  printf '%s\n' "$title" >&2
+  tput civis 2>/dev/null || true
+  while true; do
+    for i in "${!options[@]}"; do
+      printf '%s\r' "$CLEAR_LINE" >&2
+      if [ "$i" -eq "$selected" ]; then
+        printf '  %s> %s%s\n' "$CYAN" "${options[$i]}" "$RESET" >&2
+      else
+        printf '    %s\n' "${options[$i]}" >&2
+      fi
+    done
+
+    IFS= read -rsn1 key
+    if [ "$key" = "" ]; then
+      tput cnorm 2>/dev/null || true
+      printf '\n' >&2
+      printf '%s' "$selected"
+      return
+    fi
+
+    if [ "$key" = $'\033' ]; then
+      IFS= read -rsn2 key || true
+      case "$key" in
+        "[A")
+          selected=$((selected - 1))
+          if [ "$selected" -lt 0 ]; then
+            selected=$((${#options[@]} - 1))
+          fi
+          ;;
+        "[B")
+          selected=$((selected + 1))
+          if [ "$selected" -ge "${#options[@]}" ]; then
+            selected=0
+          fi
+          ;;
+      esac
+    fi
+
+    printf '\033[%dA' "${#options[@]}" >&2
+  done
+}
+
+run_quiet() {
+  local label="$1"
+  shift
+  mkdir -p "$SETUP_LOG_DIR"
+  local safe_label
+  safe_label="$(printf '%s' "$label" | tr '[:upper:] ' '[:lower:]-' | tr -cd 'a-z0-9_-')"
+  local log="$SETUP_LOG_DIR/$(date +%Y%m%d%H%M%S)-$safe_label.log"
+  local frames=("|" "/" "-" "\\")
+  local frame=0
+  local status=0
+
+  if [ -t 1 ]; then
+    printf '  %s %s' "${frames[$frame]}" "$label"
+  else
+    echo "RUN $label"
+  fi
+
+  "$@" >"$log" 2>&1 &
+  local pid=$!
+  while kill -0 "$pid" >/dev/null 2>&1; do
+    if [ -t 1 ]; then
+      frame=$(((frame + 1) % 4))
+      printf '\r%s  %s %s' "$CLEAR_LINE" "${frames[$frame]}" "$label"
+    fi
+    sleep 0.12
+  done
+
+  set +e
+  wait "$pid"
+  status=$?
+  set -e
+
+  if [ "$status" -eq 0 ]; then
+    if [ -t 1 ]; then
+      printf '\r%s  %sOK%s %s\n' "$CLEAR_LINE" "$GREEN" "$RESET" "$label"
+    else
+      ok "$label"
+    fi
+    return 0
+  fi
+
+  if [ -t 1 ]; then
+    printf '\r%s  %sERROR%s %s\n' "$CLEAR_LINE" "$RED" "$RESET" "$label"
+  else
+    warn "$label failed"
+  fi
+  warn "Details saved to $log"
+  return "$status"
 }
 
 generate_key() {
@@ -167,7 +268,18 @@ sudo_cmd() {
   fail "This install step needs root privileges, but sudo is not available."
 }
 
-install_gcloud_macos() {
+ensure_sudo_session() {
+  if [ "$(id -u)" -eq 0 ]; then
+    return
+  fi
+  if ! command -v sudo >/dev/null 2>&1; then
+    fail "This install step needs root privileges, but sudo is not available."
+  fi
+  note "Admin password may be requested once for package installation."
+  sudo -v
+}
+
+install_gcloud_macos_cmd() {
   if ! command -v brew >/dev/null 2>&1; then
     warn "Homebrew is not installed, so setup cannot auto-install Google Cloud CLI on macOS."
     echo "Install Homebrew first, then rerun: make setup INSTALL_GCLOUD=1"
@@ -176,7 +288,7 @@ install_gcloud_macos() {
   brew install --cask google-cloud-sdk
 }
 
-install_gcloud_apt() {
+install_gcloud_apt_cmd() {
   if ! command -v curl >/dev/null 2>&1; then
     sudo_cmd apt-get update
     sudo_cmd apt-get install -y curl
@@ -190,7 +302,7 @@ install_gcloud_apt() {
   sudo_cmd apt-get install -y google-cloud-cli
 }
 
-install_gcloud_yum_family() {
+install_gcloud_yum_family_cmd() {
   local installer="$1"
   local el_major="9"
   if [ -r /etc/os-release ]; then
@@ -215,17 +327,17 @@ EOF_REPO
   sudo_cmd "$installer" install -y google-cloud-cli
 }
 
-install_gcloud_linux() {
+install_gcloud_linux_cmd() {
   if command -v apt-get >/dev/null 2>&1; then
-    install_gcloud_apt
+    install_gcloud_apt_cmd
     return
   fi
   if command -v dnf >/dev/null 2>&1; then
-    install_gcloud_yum_family dnf
+    install_gcloud_yum_family_cmd dnf
     return
   fi
   if command -v yum >/dev/null 2>&1; then
-    install_gcloud_yum_family yum
+    install_gcloud_yum_family_cmd yum
     return
   fi
   if command -v snap >/dev/null 2>&1; then
@@ -241,10 +353,11 @@ install_gcloud() {
   step "Installing Google Cloud CLI"
   case "$(uname -s)" in
     Darwin)
-      install_gcloud_macos
+      run_quiet "Installing Google Cloud CLI with Homebrew" install_gcloud_macos_cmd || return 1
       ;;
     Linux)
-      install_gcloud_linux
+      ensure_sudo_session
+      run_quiet "Installing Google Cloud CLI" install_gcloud_linux_cmd || return 1
       ;;
     *)
       warn "Automatic Google Cloud CLI install is not supported on $(uname -s)."
@@ -339,13 +452,24 @@ check_go() {
 check_gcloud() {
   if ! command -v gcloud >/dev/null 2>&1; then
     warn "gcloud is not installed. It is required for live Vertex verification and local ADC auth."
-    if [ "$INSTALL_GCLOUD" -eq 1 ] || confirm "Install Google Cloud CLI now?" "n"; then
+    local choice=1
+    if [ "$INSTALL_GCLOUD" -eq 1 ]; then
+      choice=0
+    elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+      choice=1
+    else
+      choice="$(select_menu "Choose how to continue:" 1 "Install Google Cloud CLI now" "Skip for now" "Abort setup")"
+    fi
+    if [ "$choice" -eq 0 ]; then
       if install_gcloud; then
         check_gcloud
         return
       fi
       warn "Continuing without gcloud. Live Vertex setup will not work until it is installed."
       return
+    fi
+    if [ "$choice" -eq 2 ]; then
+      fail "Setup aborted before installing gcloud."
     fi
     warn "Skipped Google Cloud CLI install. Live Vertex setup will not work until gcloud is installed."
     return
@@ -364,20 +488,19 @@ run_tests() {
     return
   fi
   mkdir -p .cache/go-build
-  GOCACHE="${GOCACHE:-$ROOT_DIR/.cache/go-build}" go test ./... -count=1
-  ok "Local tests passed"
+  run_quiet "Local Go tests" env GOCACHE="${GOCACHE:-$ROOT_DIR/.cache/go-build}" go test ./... -count=1
 }
 
-step "Go LLM Gateway setup"
-echo "This prepares local config, checks dependencies, and runs the non-live test suite."
+step "Go LLM Gateway Setup"
+note "One path: make setup -> make verify-gcp -> make run"
 
 load_existing_env
 
-step "Checking dependencies"
+step "Checking Dependencies"
 check_go
 check_gcloud
 
-step "Configuring .env"
+step "Configuring Local Environment"
 if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "your-project-id" ]; then
   PROJECT_ID="$(prompt "Google Cloud project ID" "your-project-id")"
 fi
@@ -394,13 +517,12 @@ if [ "$PROJECT_ID" = "your-project-id" ]; then
   warn ".env still uses the placeholder project ID. Edit GOOGLE_CLOUD_PROJECT before live Vertex calls."
 fi
 
-step "Running local verification"
+step "Running Local Verification"
 run_tests
 
-step "Next commands"
-echo "1. If needed, authenticate Google Cloud:"
-echo "   gcloud auth login"
-echo "   gcloud auth application-default login"
+step "Next Commands"
+echo "1. Authenticate Google Cloud:"
+echo "   gcloud auth login && gcloud auth application-default login"
 echo "   gcloud config set project \"$PROJECT_ID\""
 echo
 echo "2. Verify Vertex model access:"
