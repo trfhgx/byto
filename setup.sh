@@ -18,6 +18,7 @@ NON_INTERACTIVE=0
 SKIP_TESTS=0
 INSTALL_GCLOUD=0
 SETUP_LOG_DIR="$ROOT_DIR/.cache/setup"
+HAS_TTY=0
 
 usage() {
   cat <<'EOF'
@@ -105,6 +106,10 @@ else
   CLEAR_LINE=""
 fi
 
+if [ -r /dev/tty ] && [ -w /dev/tty ]; then
+  HAS_TTY=1
+fi
+
 step() {
   echo
   echo "${BOLD}${CYAN}$*${RESET}"
@@ -135,7 +140,10 @@ prompt() {
     printf '%s' "$default"
     return
   fi
-  read -r -p "$label [$default]: " value
+  if [ "$HAS_TTY" -ne 1 ]; then
+    fail "Interactive setup needs a terminal. Rerun from a terminal or use NON_INTERACTIVE=1."
+  fi
+  read -r -p "$label [$default]: " value </dev/tty
   if [ -z "$value" ]; then
     value="$default"
   fi
@@ -151,33 +159,36 @@ select_menu() {
   local key=""
   local i
 
-  if [ "$NON_INTERACTIVE" -eq 1 ] || [ ! -t 0 ] || [ ! -t 1 ]; then
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
     printf '%s' "$selected"
     return
   fi
+  if [ "$HAS_TTY" -ne 1 ]; then
+    fail "Interactive setup needs a terminal for selection. Rerun from a terminal or use NON_INTERACTIVE=1."
+  fi
 
-  printf '%s\n' "$title" >&2
-  tput civis 2>/dev/null || true
+  printf '%s\n' "$title" >/dev/tty
+  tput civis >/dev/tty 2>/dev/null || true
   while true; do
     for i in "${!options[@]}"; do
-      printf '%s\r' "$CLEAR_LINE" >&2
+      printf '%s\r' "$CLEAR_LINE" >/dev/tty
       if [ "$i" -eq "$selected" ]; then
-        printf '  %s> %s%s\n' "$CYAN" "${options[$i]}" "$RESET" >&2
+        printf '  %s> %s%s\n' "$CYAN" "${options[$i]}" "$RESET" >/dev/tty
       else
-        printf '    %s\n' "${options[$i]}" >&2
+        printf '    %s\n' "${options[$i]}" >/dev/tty
       fi
     done
 
-    IFS= read -rsn1 key
+    IFS= read -rsn1 key </dev/tty
     if [ "$key" = "" ]; then
-      tput cnorm 2>/dev/null || true
-      printf '\n' >&2
+      tput cnorm >/dev/tty 2>/dev/null || true
+      printf '\n' >/dev/tty
       printf '%s' "$selected"
       return
     fi
 
     if [ "$key" = $'\033' ]; then
-      IFS= read -rsn2 key || true
+      IFS= read -rsn2 key </dev/tty || true
       case "$key" in
         "[A")
           selected=$((selected - 1))
@@ -194,7 +205,7 @@ select_menu() {
       esac
     fi
 
-    printf '\033[%dA' "${#options[@]}" >&2
+    printf '\033[%dA' "${#options[@]}" >/dev/tty
   done
 }
 
