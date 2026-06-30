@@ -1,8 +1,137 @@
 {
   "version": 1,
-  "updated_at": "2026-06-30T00:00:00Z",
-  "source": "seed",
+  "updated_at": "2026-06-30T17:34:09.780454Z",
+  "source": "vertex-live-refresh",
   "models": [
+    {
+      "id": "gemini-1.5-pro-002",
+      "publisher": "google",
+      "family": "gemini-pro",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "openEvaluationPipeline",
+        "openGenerationAiStudio",
+        "openNotebook",
+        "openNotebooks"
+      ],
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-2.0-flash-001",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "openGenerationAiStudio",
+        "openNotebook",
+        "openNotebooks"
+      ],
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-2.0-flash-lite-001",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-2.5-flash",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-2.5-flash-lite",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-2.5-flash-preview-04-17",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "PUBLIC_PREVIEW",
+      "supported_actions": [
+        "openGenerationAiStudio"
+      ],
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-2.5-flash-tts",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-2.5-pro",
+      "publisher": "google",
+      "family": "gemini-pro",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-2.5-pro-exp-03-25",
+      "publisher": "google",
+      "family": "gemini-pro",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "EXPERIMENTAL",
+      "supported_actions": [
+        "openGenerationAiStudio",
+        "openNotebook",
+        "openNotebooks"
+      ],
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-2.5-pro-tts",
+      "publisher": "google",
+      "family": "gemini-pro",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
     {
       "id": "gemini-3-flash-preview",
       "display_name": "Gemini 3 Flash Preview",
@@ -10,15 +139,88 @@
       "family": "gemini-flash",
       "enabled": true,
       "available": true,
+      "launch_stage": "PUBLIC_PREVIEW",
       "capabilities": {
-        "reasoning_effort": ["low", "medium"],
-        "input": ["text"],
-        "output": ["text"],
-        "streaming": true,
-        "tools": false,
-        "json_mode": false
+        "reasoning_effort": [
+          "low",
+          "medium"
+        ],
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true
       },
-      "notes": "Fast/low-latency profile. Review live Vertex metadata for production before relying on preview models."
+      "notes": "Fast/low-latency profile. Review live Vertex metadata for production before relying on preview models.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-3-pro-image",
+      "publisher": "google",
+      "family": "gemini-pro",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-3.1-flash-image",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-3.1-flash-image-preview",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "PUBLIC_PREVIEW",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-3.1-flash-lite",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-3.1-flash-lite-image",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-3.1-flash-lite-preview",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "PUBLIC_PREVIEW",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
     },
     {
       "id": "gemini-3.1-pro-preview",
@@ -27,15 +229,23 @@
       "family": "gemini-pro",
       "enabled": true,
       "available": true,
+      "launch_stage": "PUBLIC_PREVIEW",
       "capabilities": {
-        "reasoning_effort": ["low", "medium", "hard"],
-        "input": ["text"],
-        "output": ["text"],
-        "streaming": true,
-        "tools": false,
-        "json_mode": false
+        "reasoning_effort": [
+          "low",
+          "medium",
+          "hard"
+        ],
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true
       },
-      "notes": "Higher-reasoning profile. Review live Vertex metadata for production before relying on preview models."
+      "notes": "Higher-reasoning profile. Review live Vertex metadata for production before relying on preview models.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
     },
     {
       "id": "gemini-3.1-pro-preview-customtools",
@@ -43,16 +253,56 @@
       "publisher": "google",
       "family": "gemini-pro",
       "enabled": true,
-      "available": true,
+      "available": false,
       "capabilities": {
-        "reasoning_effort": ["low", "medium", "hard"],
-        "input": ["text"],
-        "output": ["text"],
+        "reasoning_effort": [
+          "low",
+          "medium",
+          "hard"
+        ],
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
         "streaming": true,
-        "tools": true,
-        "json_mode": false
+        "tools": true
       },
       "notes": "Tool-oriented profile. Review live Vertex metadata for production before relying on preview models."
+    },
+    {
+      "id": "gemini-3.5-flash",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-embedding-2",
+      "publisher": "google",
+      "family": "gemini",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+    },
+    {
+      "id": "gemini-live-2.5-flash-native-audio",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": true,
+      "launch_stage": "GA",
+      "capabilities": {},
+      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
+      "last_seen_at": "2026-06-30T17:34:09.780438Z"
     }
   ]
 }
