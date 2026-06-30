@@ -1,0 +1,29 @@
+name: Test
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: '1.22'
+
+      - name: Check out code
+        uses: actions/checkout@v3
+
+      - name: Verify modules
+        run: go mod verify
+
+      - name: Build
+        run: go build -v ./cmd/gateway
+
+      - name: Test
+        run: go test -v -race ./...
