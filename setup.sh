@@ -661,11 +661,6 @@ check_gcloud() {
     return
   fi
   ok "gcloud CLI found"
-  if gcloud auth application-default print-access-token >/dev/null 2>&1; then
-    ok "Application Default Credentials are available"
-  else
-    warn "Application Default Credentials are not ready. Run: gcloud auth application-default login"
-  fi
 }
 
 run_tests() {
@@ -675,6 +670,18 @@ run_tests() {
   fi
   mkdir -p .cache/go-build
   run_quiet "Local Go tests" env GOCACHE="${GOCACHE:-$ROOT_DIR/.cache/go-build}" go test ./... -count=1
+}
+
+active_gcloud_account() {
+  gcloud auth list --filter=status:ACTIVE --format='value(account)' 2>/dev/null | head -n 1 || true
+}
+
+configured_gcloud_project() {
+  gcloud config get-value project 2>/dev/null | head -n 1 || true
+}
+
+adc_is_ready() {
+  gcloud auth application-default print-access-token >/dev/null 2>&1
 }
 
 authenticate_google_cloud() {
@@ -691,18 +698,45 @@ authenticate_google_cloud() {
     return 0
   fi
 
+  local active_account
+  local configured_project
+  local adc_status="missing"
+  active_account="$(active_gcloud_account)"
+  configured_project="$(configured_gcloud_project)"
+  if adc_is_ready; then
+    adc_status="ready"
+  fi
+
+  echo "  Account: ${active_account:-not signed in}"
+  echo "  Application Default Credentials: $adc_status"
+  echo "  gcloud project: ${configured_project:-not set}"
+  echo "  Target project: $PROJECT_ID"
+
+  if [ -n "$active_account" ] && [ "$adc_status" = "ready" ] && [ "$configured_project" = "$PROJECT_ID" ]; then
+    ok "Google Cloud auth is ready"
+    return 0
+  fi
+
   local choice
-  choice="$(select_menu "Google Cloud auth:" 0 "Authenticate now" "Skip auth" "Abort setup")"
+  choice="$(select_menu "Google Cloud auth:" 0 "Run full Google auth now" "Set gcloud project only" "Skip auth" "Abort setup")"
   case "$choice" in
     0)
       run_foreground "Google account login" gcloud auth login
       run_foreground "Application Default Credentials login" gcloud auth application-default login
       run_quiet "Set gcloud project" gcloud config set project "$PROJECT_ID"
+      if adc_is_ready; then
+        ok "Application Default Credentials are available"
+      else
+        warn "Application Default Credentials are still not ready. Rerun make setup and choose Google auth."
+      fi
       ;;
     1)
-      warn "Skipped Google auth. Vertex verification may fail until you authenticate."
+      run_quiet "Set gcloud project" gcloud config set project "$PROJECT_ID"
       ;;
     2)
+      warn "Skipped Google auth. Vertex verification may fail until you authenticate."
+      ;;
+    3)
       fail "Setup aborted during Google auth."
       ;;
   esac
