@@ -1,346 +1,123 @@
-# Go LLM Gateway for Vertex AI Gemini
+# Byto
 
-Production-oriented Go gateway exposing an OpenAI-compatible API over Vertex AI Gemini.
+<p align="center">
+  <img src="assets/byto_banner.jpg" alt="Byto API Gateway Banner" width="100%" />
+</p>
+
+Byto is a Go gateway that exposes an OpenAI-compatible API for Vertex AI Gemini. It gives your apps one internal LLM endpoint while keeping model selection explicit.
 
 ```text
-Your apps -> /v1/chat/completions -> Go Gateway -> Vertex AI Gemini
+your apps -> Byto -> Vertex AI Gemini
 ```
 
-This project is designed for people building multiple LLM-powered apps who want one reusable internal completion URL without using LiteLLM or OpenRouter.
+## What It Does
 
-## What it does
+- Serves `POST /v1/chat/completions`
+- Serves `GET /v1/models`
+- Serves `GET /healthz`
+- Requires service API keys with `Authorization: Bearer ...`
+- Requires callers to send a model on every completion request
+- Translates OpenAI-style chat payloads to Vertex Gemini `generateContent`
+- Supports streaming responses with server-sent events
+- Writes JSONL request logs
+- Refreshes the local Gemini model catalog from Vertex on startup
 
-- Exposes `POST /v1/chat/completions`
-- Exposes `GET /v1/models`
-- Exposes `GET /healthz`
-- Accepts OpenAI-style chat requests
-- Calls Vertex AI Gemini `generateContent`
-- Supports Vertex AI `streamGenerateContent` via SSE
-- Uses real Gemini model IDs such as `gemini-3.1-pro-preview`
-- Supports service-level API keys
-- Writes persistent JSONL logs
-- Passes explicit Gemini cached content IDs through to Vertex
-- Keeps prompt formatting deterministic for implicit caching
-
-## What it does not do
-
-- It does not manage your product users.
-- It does not manage your app credits/subscriptions.
-- It does not decide product limits.
-- It does not use LiteLLM.
-- It does not hide model selection unless you configure aliases.
-
-Each application should own its own business logic. This gateway only owns LLM provider mechanics.
+Full endpoint documentation lives in [docs/API.md](docs/API.md).
 
 ## Requirements
 
 - Go 1.22+
-- Docker, optional
-- Google Cloud SDK, for GCP setup and local auth
-- Google Cloud project with billing attached
-- Vertex AI API enabled
+- Google Cloud CLI
+- Docker, for cloud setup and container builds
+- A Google Cloud project that can call Vertex AI
 
-## Quick local setup
+## Local Setup
+
+Use one command:
 
 ```bash
 make setup PROJECT=your-project-id
 ```
 
-The setup flow checks Go, offers to install `gcloud`, writes `.env`, can run Google auth, runs local tests, and then gives you an interactive action menu for Vertex verification, local smoke tests, starting the gateway, or printing a curl example. Long package-manager/test output is kept in `.cache/setup/` logs.
+The setup flow checks dependencies, writes `.env`, guides Google auth, sets the ADC quota project, enables Vertex AI, runs local verification, and then shows an interactive action menu.
 
-You can also run it interactively:
-
-```bash
-make setup
-```
-
-For CI or scripted setup:
-
-```bash
-make setup PROJECT=your-project-id NON_INTERACTIVE=1
-```
-
-If `gcloud` is not installed, interactive setup offers to install it. For scripted setup:
-
-```bash
-make setup PROJECT=your-project-id INSTALL_GCLOUD=1
-```
-
-The resulting `.env` contains:
-
-```bash
-GOOGLE_CLOUD_PROJECT=your-project-id
-GOOGLE_CLOUD_LOCATION=global
-GATEWAY_API_KEYS=<generated-local-key>
-MODEL_CATALOG_PATH=config/models.json
-MODEL_CATALOG_REFRESH_ON_START=true
-```
-
-Run:
+Run the gateway:
 
 ```bash
 make run
 ```
 
-`make run` automatically loads `.env`.
-
-Test:
+Call it:
 
 ```bash
 curl -s http://localhost:8080/v1/chat/completions \
-  -H "Authorization: Bearer dev-local-key" \
+  -H "Authorization: Bearer <gateway-api-key>" \
   -H "Content-Type: application/json" \
   -d '{
-    "model":"gemini-3.1-pro-preview",
-    "messages":[{"role":"user","content":"Reply with only: ok"}]
+    "model": "gemini-2.5-flash",
+    "messages": [{ "role": "user", "content": "Reply with only: ok" }]
   }' | jq
 ```
 
-## CLI-based GCP setup
+## Cloud Setup
 
-Most tedious GCP setup is automated with `gcloud`.
-
-```bash
-export GOOGLE_CLOUD_PROJECT="your-project-id"
-export GOOGLE_CLOUD_LOCATION="global"
-
-gcloud auth login
-gcloud config set project "$GOOGLE_CLOUD_PROJECT"
-
-./scripts/setup-gcp.sh
-```
-
-The setup script enables APIs, creates a service account, grants required roles, and writes `.env.generated`.
-
-It enables:
-
-- Vertex AI API
-- Cloud Run API
-- Cloud Build API
-- Artifact Registry API
-- IAM API
-- IAM Service Account Credentials API
-- Cloud Logging API
-- Cloud Monitoring API
-- Service Usage API
-
-It creates:
-
-```text
-llm-gateway-sa@YOUR_PROJECT_ID.iam.gserviceaccount.com
-```
-
-It grants:
-
-- `roles/aiplatform.user`
-- `roles/logging.logWriter`
-- `roles/monitoring.metricWriter`
-- `roles/serviceusage.serviceUsageConsumer`
-
-## What still requires manual setup
-
-Some things cannot be reliably automated without your billing/org permissions:
-
-- Create or choose the Google Cloud project
-- Attach billing / free trial credits
-- Accept any model/API terms Google prompts for
-- Create billing budget alerts
-- Request quota increases if needed
-
-## Verify Vertex model access
+Use the cloud path when you want Docker and Cloud Run readiness:
 
 ```bash
-make verify-gcp MODEL=gemini-3.1-pro-preview
+make setup-cloud PROJECT=your-project-id MODEL=gemini-2.5-flash
 ```
 
-Gemini 3.1 Pro Preview is available on global endpoints, so use:
+Equivalent alias:
 
 ```bash
+make setup cloud PROJECT=your-project-id MODEL=gemini-2.5-flash
+```
+
+Cloud setup checks Google auth, checks Docker, writes `.env`, enables the required Google Cloud APIs, creates the Cloud Run service account, grants IAM roles, builds the Docker image, and runs live Vertex e2e verification.
+
+Deploy during setup:
+
+```bash
+make setup-cloud PROJECT=your-project-id MODEL=gemini-2.5-flash DEPLOY=1
+```
+
+## Configuration
+
+The runtime reads `.env` automatically through the Makefile.
+
+```bash
+GOOGLE_CLOUD_PROJECT=your-project-id
 GOOGLE_CLOUD_LOCATION=global
+GATEWAY_API_KEYS=comma,separated,service,keys
+MODEL_CATALOG_PATH=config/models.json
+MODEL_CATALOG_REFRESH_ON_START=true
+ALLOW_ANY_GEMINI_MODEL=false
+VERTEX_BASE_URL=https://aiplatform.googleapis.com
+PORT=8080
+LOG_PATH=logs/requests.jsonl
+REQUEST_TIMEOUT_SECONDS=180
 ```
 
-## Production deploy to Cloud Run
+## Models
 
-Set a real app key first:
+There is no default model. If `model` is missing or empty, Byto returns `400`.
 
-```bash
-export GATEWAY_API_KEYS="replace-with-long-random-secret"
-export GOOGLE_CLOUD_PROJECT="your-project-id"
-export GOOGLE_CLOUD_LOCATION="global"
-```
+Byto resolves models in this order:
 
-Deploy:
+1. Reject empty `model`.
+2. Apply `MODEL_ALIASES`, if configured.
+3. Accept enabled and available models from `config/models.json`.
+4. If `ALLOW_ANY_GEMINI_MODEL=true`, accept any resolved model that starts with `gemini-`.
+5. Reject everything else.
 
-```bash
-./scripts/cloud-run-deploy.sh
-```
-
-Cloud Run should run as:
-
-```text
-llm-gateway-sa@YOUR_PROJECT_ID.iam.gserviceaccount.com
-```
-
-No JSON service account key is needed in production.
-
-## Docker Compose
-
-```bash
-cp .env.example .env
-# edit .env
-docker compose up --build
-```
-
-For local Docker, easiest auth is to set `VERTEX_ACCESS_TOKEN` manually:
-
-```bash
-export VERTEX_ACCESS_TOKEN="$(gcloud auth application-default print-access-token)"
-```
-
-Then put it in `.env` or pass it to Docker Compose.
-
-## API
-
-### `POST /v1/chat/completions`
-
-Non-streaming:
-
-```json
-{
-  "model": "gemini-3.1-pro-preview",
-  "messages": [
-    { "role": "system", "content": "You are concise." },
-    { "role": "user", "content": "Say ok" }
-  ]
-}
-```
-
-Streaming:
-
-```json
-{
-  "model": "gemini-3.1-pro-preview",
-  "stream": true,
-  "messages": [
-    { "role": "user", "content": "Write one sentence." }
-  ]
-}
-```
-
-Explicit cache passthrough:
-
-```json
-{
-  "model": "gemini-3.1-pro-preview",
-  "messages": [
-    { "role": "user", "content": "Use the cached context and summarize." }
-  ],
-  "extra_body": {
-    "google": {
-      "cached_content": "projects/PROJECT/locations/global/cachedContents/CACHE_ID"
-    }
-  }
-}
-```
-
-### `GET /v1/models`
-
-Returns configured allowed model IDs.
+`config/models.json` stores model metadata such as enabled state, live availability, supported actions, and reasoning-effort tiers. Startup refresh adds newly discovered Vertex Gemini models as disabled entries for review.
 
 ## Logs
 
-Default log path:
+Default request log path:
 
 ```text
 logs/requests.jsonl
 ```
 
-Each line includes:
-
-```json
-{
-  "timestamp": "...",
-  "request_id": "...",
-  "app_id": "...",
-  "model": "gemini-3.1-pro-preview",
-  "vertex_model": "gemini-3.1-pro-preview",
-  "stream": false,
-  "status": 200,
-  "latency_ms": 123,
-  "prompt_tokens": 10,
-  "completion_tokens": 5,
-  "total_tokens": 15,
-  "cached_tokens": 8
-}
-```
-
-Add `X-App-ID` from each product service to make logs easier to split by app.
-
-## Model configuration
-
-Callers must send a model on every request. If `model` is missing or empty, the gateway returns a 400 error instead of choosing for you.
-
-The recommended path is to send real Gemini/Vertex model IDs. Example:
-
-```json
-{ "model": "gemini-3.1-pro-preview" }
-```
-
-The model list is configured through `config/models.json`. Each entry can carry operational metadata such as whether it is enabled, whether it was seen live, supported actions, and rough reasoning-effort tiers.
-
-```json
-{
-  "id": "gemini-3.1-pro-preview",
-  "enabled": true,
-  "available": true,
-  "capabilities": {
-    "reasoning_effort": ["low", "medium", "hard"],
-    "streaming": true,
-    "tools": false
-  }
-}
-```
-
-On startup, the gateway loads enabled and available models from `MODEL_CATALOG_PATH`. If `MODEL_CATALOG_REFRESH_ON_START=true`, it starts a background Vertex publisher-model refresh. The refresh marks live availability and adds newly discovered Gemini models to the file as disabled entries for review.
-
-You can allow future Gemini model IDs without redeploying code:
-
-```bash
-ALLOW_ANY_GEMINI_MODEL=true
-```
-
-Optional aliases:
-
-```bash
-MODEL_ALIASES=pro=gemini-3.1-pro-preview,tools=gemini-3.1-pro-preview-customtools
-```
-
-Aliases are optional. The recommended production path is to send real model IDs from the calling service.
-
-Resolution order is:
-
-1. Reject empty `model`.
-2. If `model` matches `MODEL_ALIASES`, replace it with the configured Gemini model ID.
-3. Accept the resolved model if it is enabled and available in the model catalog.
-4. If `ALLOW_ANY_GEMINI_MODEL=true`, accept any resolved model that starts with `gemini-`.
-5. Otherwise reject the request.
-
-## Tests
-
-```bash
-make test
-make test-race
-```
-
-Optional live Vertex test:
-
-```bash
-RUN_LIVE_VERTEX_TESTS=1 make test-live
-```
-
-## Official Google docs referenced
-
-- Gemini 3.1 Pro model IDs: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/3-1-pro
-- Gemini inference API: https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/models/inference
-- Vertex AI service account role: https://docs.cloud.google.com/workflows/docs/tutorials/use-vertex-ai-models
-- Service account creation via gcloud: https://docs.cloud.google.com/iam/docs/service-accounts-create
+Each JSONL record includes request ID, optional `X-App-ID`, requested model, resolved Vertex model, stream flag, HTTP status, latency, token counts, and error text when present.
