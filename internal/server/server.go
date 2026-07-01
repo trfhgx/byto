@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -24,6 +26,10 @@ import (
 type GeminiClient interface {
 	GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest) (gemini.GenerateResponse, error)
 	StreamGenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, onChunk func(gemini.GenerateResponse) error) error
+	CreateCachedContent(ctx context.Context, body json.RawMessage) (json.RawMessage, error)
+	ListCachedContents(ctx context.Context, query url.Values) (json.RawMessage, error)
+	GetCachedContent(ctx context.Context, id string) (json.RawMessage, error)
+	DeleteCachedContent(ctx context.Context, id string) (json.RawMessage, error)
 }
 
 type Server struct {
@@ -100,6 +106,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/healthz", s.health)
 	mux.HandleFunc("/v1/models", s.models)
 	mux.HandleFunc("/v1/models/", s.model)
+	mux.HandleFunc("/v1/caches", s.caches)
+	mux.HandleFunc("/v1/caches/", s.cache)
 	mux.HandleFunc("/v1/chat/completions", s.chatCompletions)
 	return requestID(mux)
 }
@@ -149,6 +157,54 @@ func (s *Server) model(w http.ResponseWriter, r *http.Request) {
 		info.ID = id
 	}
 	writeJSON(w, http.StatusOK, info)
+}
+
+func (s *Server) caches(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid_api_key")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout())
+	defer cancel()
+	switch r.Method {
+	case http.MethodGet:
+		out, err := s.gemini.ListCachedContents(ctx, r.URL.Query())
+		s.writeVertexProxyResult(w, out, err)
+	case http.MethodPost:
+		body, err := io.ReadAll(io.LimitReader(r.Body, 8*1024*1024))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "read request body failed", "invalid_request_error")
+			return
+		}
+		out, err := s.gemini.CreateCachedContent(ctx, json.RawMessage(body))
+		s.writeVertexProxyResult(w, out, err)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed")
+	}
+}
+
+func (s *Server) cache(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid_api_key")
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/caches/"), "/")
+	if id == "" {
+		writeError(w, http.StatusNotFound, "cache not found", "not_found")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout())
+	defer cancel()
+	switch r.Method {
+	case http.MethodGet:
+		out, err := s.gemini.GetCachedContent(ctx, id)
+		s.writeVertexProxyResult(w, out, err)
+	case http.MethodDelete:
+		out, err := s.gemini.DeleteCachedContent(ctx, id)
+		s.writeVertexProxyResult(w, out, err)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed")
+	}
 }
 
 func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -275,6 +331,22 @@ func sendSSE(w http.ResponseWriter, v any) {
 	fmt.Fprintf(w, "data: %s\n\n", string(b))
 }
 
+func (s *Server) writeVertexProxyResult(w http.ResponseWriter, out json.RawMessage, err error) {
+	if err != nil {
+		if ve, ok := err.(*gemini.VertexError); ok {
+			status := http.StatusBadGateway
+			if ve.Status >= 400 && ve.Status < 500 {
+				status = ve.Status
+			}
+			writeError(w, status, ve.Error(), "vertex_error")
+			return
+		}
+		writeError(w, http.StatusBadGateway, err.Error(), "vertex_error")
+		return
+	}
+	writeRawJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) setModelCatalog(c catalog.Catalog) {
 	models := make(map[string]catalog.Model, len(c.Models))
 	for _, m := range c.Models {
@@ -354,6 +426,18 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(v)
+}
+func writeRawJSON(w http.ResponseWriter, status int, b []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if len(b) == 0 {
+		_, _ = w.Write([]byte("{}\n"))
+		return
+	}
+	_, _ = w.Write(b)
+	if b[len(b)-1] != '\n' {
+		_, _ = w.Write([]byte("\n"))
+	}
 }
 func writeError(w http.ResponseWriter, status int, msg, typ string) {
 	writeJSON(w, status, openai.ErrorResponse{Error: openai.ErrorBody{Message: msg, Type: typ}})

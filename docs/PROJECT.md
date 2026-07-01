@@ -27,6 +27,8 @@ The gateway only handles provider mechanics:
 - streaming translation from Gemini `streamGenerateContent`
 - persistent request logging
 - explicit cache passthrough
+- explicit cache lifecycle forwarding
+- transient Vertex retry handling
 - model allow-listing by real Gemini model name
 
 ## Non-goals
@@ -70,7 +72,7 @@ For explicit Gemini cache objects, services can pass:
 }
 ```
 
-The gateway maps this to Vertex `cachedContent`.
+The gateway maps this to Vertex `cachedContent`. For cache lifecycle operations, services can use the gateway's `/v1/caches` endpoints to create, list, inspect, and delete Vertex `cachedContents` resources. Services still own cache policy and storage of cache resource names.
 
 ## Current v1 limitations
 
@@ -86,5 +88,4 @@ The gateway maps this to Vertex `cachedContent`.
 2. Add OpenAI tool-call mapping to Gemini function declarations.
 3. Add optional BigQuery or Postgres logging sink.
 4. Add structured output support.
-5. Add explicit cache management endpoints.
-6. Add load tests and benchmarks.
+5. Add load tests and benchmarks.

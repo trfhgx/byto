@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +26,23 @@ type Client struct {
 	baseURL  string
 	http     *http.Client
 	tokens   auth.TokenProvider
+	retry    RetryConfig
+}
+
+type RetryConfig struct {
+	MaxAttempts  int
+	InitialDelay time.Duration
+	MaxDelay     time.Duration
+}
+
+type VertexError struct {
+	Operation string
+	Status    int
+	Body      string
+}
+
+func (e *VertexError) Error() string {
+	return fmt.Sprintf("vertex %s status %d: %s", e.Operation, e.Status, e.Body)
 }
 
 func NewClient(cfg config.Config, tokens auth.TokenProvider) *Client {
@@ -33,6 +52,11 @@ func NewClient(cfg config.Config, tokens auth.TokenProvider) *Client {
 		baseURL:  strings.TrimRight(cfg.VertexBaseURL, "/"),
 		http:     &http.Client{Timeout: cfg.RequestTimeout()},
 		tokens:   tokens,
+		retry: RetryConfig{
+			MaxAttempts:  cfg.VertexRetryMaxAttempts,
+			InitialDelay: time.Duration(cfg.VertexRetryInitialMS) * time.Millisecond,
+			MaxDelay:     time.Duration(cfg.VertexRetryMaxMS) * time.Millisecond,
+		},
 	}
 }
 
@@ -42,18 +66,15 @@ func (c *Client) GenerateContent(ctx context.Context, model string, in GenerateR
 	if err != nil {
 		return out, err
 	}
-	req, err := c.newRequest(ctx, model, "generateContent", body)
-	if err != nil {
-		return out, err
-	}
-	resp, err := c.http.Do(req)
+	u := c.modelMethodURL(model, "generateContent")
+	resp, err := c.do(ctx, http.MethodPost, u, body, "generateContent")
 	if err != nil {
 		return out, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return out, fmt.Errorf("vertex generateContent status %d: %s", resp.StatusCode, string(b))
+		return out, &VertexError{Operation: "generateContent", Status: resp.StatusCode, Body: string(b)}
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return out, err
@@ -66,20 +87,44 @@ func (c *Client) StreamGenerateContent(ctx context.Context, model string, in Gen
 	if err != nil {
 		return err
 	}
-	req, err := c.newRequest(ctx, model, "streamGenerateContent", body)
-	if err != nil {
-		return err
-	}
-	resp, err := c.http.Do(req)
+	u := c.modelMethodURL(model, "streamGenerateContent")
+	resp, err := c.do(ctx, http.MethodPost, u, body, "streamGenerateContent")
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode > 299 {
 		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("vertex streamGenerateContent status %d: %s", resp.StatusCode, string(b))
+		return &VertexError{Operation: "streamGenerateContent", Status: resp.StatusCode, Body: string(b)}
 	}
 	return parseStream(resp.Body, onChunk)
+}
+
+func (c *Client) CreateCachedContent(ctx context.Context, body json.RawMessage) (json.RawMessage, error) {
+	normalized, err := c.normalizeCachedContentBody(body)
+	if err != nil {
+		return nil, err
+	}
+	u := fmt.Sprintf("%s/v1/projects/%s/locations/%s/cachedContents", c.baseURL, url.PathEscape(c.project), url.PathEscape(c.location))
+	return c.rawJSON(ctx, http.MethodPost, u, normalized, "cachedContents.create")
+}
+
+func (c *Client) ListCachedContents(ctx context.Context, query url.Values) (json.RawMessage, error) {
+	u := fmt.Sprintf("%s/v1/projects/%s/locations/%s/cachedContents", c.baseURL, url.PathEscape(c.project), url.PathEscape(c.location))
+	if encoded := normalizeCacheListQuery(query).Encode(); encoded != "" {
+		u += "?" + encoded
+	}
+	return c.rawJSON(ctx, http.MethodGet, u, nil, "cachedContents.list")
+}
+
+func (c *Client) GetCachedContent(ctx context.Context, id string) (json.RawMessage, error) {
+	u := c.cacheResourceURL(id)
+	return c.rawJSON(ctx, http.MethodGet, u, nil, "cachedContents.get")
+}
+
+func (c *Client) DeleteCachedContent(ctx context.Context, id string) (json.RawMessage, error) {
+	u := c.cacheResourceURL(id)
+	return c.rawJSON(ctx, http.MethodDelete, u, nil, "cachedContents.delete")
 }
 
 func (c *Client) ListPublisherModels(ctx context.Context) ([]catalog.LiveModel, error) {
@@ -94,21 +139,14 @@ func (c *Client) ListPublisherModels(ctx context.Context) ([]catalog.LiveModel, 
 		if pageToken != "" {
 			u += "&pageToken=" + url.QueryEscape(pageToken)
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
-		if err != nil {
-			return nil, err
-		}
-		req.Header.Set("Authorization", "Bearer "+tok)
-		req.Header.Set("X-Goog-User-Project", c.project)
-		req.Header.Set("User-Agent", "go-llm-gateway/1.0")
-		resp, err := c.http.Do(req)
+		resp, err := c.doWithToken(ctx, http.MethodGet, u, nil, "listPublisherModels", tok)
 		if err != nil {
 			return nil, err
 		}
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {
 			b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 			resp.Body.Close()
-			return nil, fmt.Errorf("vertex list publisher models status %d: %s", resp.StatusCode, string(b))
+			return nil, &VertexError{Operation: "listPublisherModels", Status: resp.StatusCode, Body: string(b)}
 		}
 		var body struct {
 			PublisherModels []struct {
@@ -145,12 +183,181 @@ func (c *Client) ListPublisherModels(ctx context.Context) ([]catalog.LiveModel, 
 	}
 }
 
+func (c *Client) rawJSON(ctx context.Context, method, u string, body []byte, operation string) (json.RawMessage, error) {
+	resp, err := c.do(ctx, method, u, body, operation)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	out, _ := io.ReadAll(io.LimitReader(resp.Body, 2*1024*1024))
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		return nil, &VertexError{Operation: operation, Status: resp.StatusCode, Body: string(out)}
+	}
+	if len(out) == 0 {
+		return json.RawMessage(`{}`), nil
+	}
+	return json.RawMessage(out), nil
+}
+
+func (c *Client) do(ctx context.Context, method, u string, body []byte, operation string) (*http.Response, error) {
+	tok, err := c.tokens.Token(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return c.doWithToken(ctx, method, u, body, operation, tok)
+}
+
+func (c *Client) doWithToken(ctx context.Context, method, u string, body []byte, operation, tok string) (*http.Response, error) {
+	attempts := c.retry.MaxAttempts
+	if attempts <= 0 {
+		attempts = 1
+	}
+	var lastErr error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		req, err := http.NewRequestWithContext(ctx, method, u, bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+tok)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("X-Goog-User-Project", c.project)
+		req.Header.Set("User-Agent", "go-llm-gateway/1.0")
+		resp, err := c.http.Do(req)
+		if err == nil && !isRetryableStatus(resp.StatusCode) {
+			return resp, nil
+		}
+		if err == nil && attempt == attempts {
+			return resp, nil
+		}
+		if err != nil {
+			lastErr = err
+		}
+		delay := c.retryDelay(attempt, resp)
+		if resp != nil {
+			io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+			resp.Body.Close()
+		}
+		if err := sleepContext(ctx, delay); err != nil {
+			if lastErr != nil {
+				return nil, lastErr
+			}
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func (c *Client) retryDelay(attempt int, resp *http.Response) time.Duration {
+	if resp != nil {
+		if v := strings.TrimSpace(resp.Header.Get("Retry-After")); v != "" {
+			if seconds, err := strconv.Atoi(v); err == nil && seconds > 0 {
+				return time.Duration(seconds) * time.Second
+			}
+			if t, err := http.ParseTime(v); err == nil {
+				if d := time.Until(t); d > 0 {
+					return d
+				}
+			}
+		}
+	}
+	base := c.retry.InitialDelay
+	if base <= 0 {
+		base = 250 * time.Millisecond
+	}
+	maxDelay := c.retry.MaxDelay
+	if maxDelay <= 0 {
+		maxDelay = 2 * time.Second
+	}
+	delay := base * time.Duration(1<<(attempt-1))
+	if delay > maxDelay {
+		delay = maxDelay
+	}
+	jitter := time.Duration(rand.Int63n(int64(delay / 2)))
+	return delay/2 + jitter
+}
+
+func (c *Client) modelMethodURL(model, method string) string {
+	return fmt.Sprintf("%s/v1/projects/%s/locations/%s/publishers/google/models/%s:%s", c.baseURL, url.PathEscape(c.project), url.PathEscape(c.location), url.PathEscape(model), method)
+}
+
+func (c *Client) cacheResourceURL(id string) string {
+	name := strings.Trim(strings.TrimSpace(id), "/")
+	if !strings.HasPrefix(name, "projects/") {
+		name = fmt.Sprintf("projects/%s/locations/%s/cachedContents/%s", c.project, c.location, name)
+	}
+	return c.baseURL + "/v1/" + escapeResourceName(name)
+}
+
+func (c *Client) normalizeCachedContentBody(body json.RawMessage) ([]byte, error) {
+	if len(bytes.TrimSpace(body)) == 0 {
+		return nil, fmt.Errorf("cache body is required")
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(body, &obj); err != nil {
+		return nil, fmt.Errorf("invalid cache json: %w", err)
+	}
+	if model, ok := obj["model"].(string); ok {
+		model = strings.TrimSpace(model)
+		if strings.HasPrefix(model, "gemini-") {
+			obj["model"] = fmt.Sprintf("projects/%s/locations/%s/publishers/google/models/%s", c.project, c.location, model)
+		}
+	}
+	return json.Marshal(obj)
+}
+
+func normalizeCacheListQuery(in url.Values) url.Values {
+	out := url.Values{}
+	for k, values := range in {
+		key := k
+		switch k {
+		case "page_size":
+			key = "pageSize"
+		case "page_token":
+			key = "pageToken"
+		}
+		for _, v := range values {
+			out.Add(key, v)
+		}
+	}
+	return out
+}
+
+func escapeResourceName(name string) string {
+	parts := strings.Split(name, "/")
+	for i, part := range parts {
+		parts[i] = url.PathEscape(part)
+	}
+	return strings.Join(parts, "/")
+}
+
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func isRetryableStatus(status int) bool {
+	switch status {
+	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c *Client) newRequest(ctx context.Context, model string, method string, body []byte) (*http.Request, error) {
 	tok, err := c.tokens.Token(ctx)
 	if err != nil {
 		return nil, err
 	}
-	u := fmt.Sprintf("%s/v1/projects/%s/locations/%s/publishers/google/models/%s:%s", c.baseURL, url.PathEscape(c.project), url.PathEscape(c.location), url.PathEscape(model), method)
+	u := c.modelMethodURL(model, method)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -241,5 +448,5 @@ func FinishReason(r GenerateResponse) string {
 }
 
 func NewTestClient(baseURL string, timeout time.Duration, tokens auth.TokenProvider, project, location string) *Client {
-	return &Client{project: project, location: location, baseURL: strings.TrimRight(baseURL, "/"), http: &http.Client{Timeout: timeout}, tokens: tokens}
+	return &Client{project: project, location: location, baseURL: strings.TrimRight(baseURL, "/"), http: &http.Client{Timeout: timeout}, tokens: tokens, retry: RetryConfig{MaxAttempts: 1, InitialDelay: time.Millisecond, MaxDelay: time.Millisecond}}
 }

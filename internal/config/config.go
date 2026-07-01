@@ -23,6 +23,9 @@ type Config struct {
 	GatewayAllowUnauthenticated bool              `json:"gateway_allow_unauthenticated"`
 	LogPath                     string            `json:"log_path"`
 	RequestTimeoutSeconds       int               `json:"request_timeout_seconds"`
+	VertexRetryMaxAttempts      int               `json:"vertex_retry_max_attempts"`
+	VertexRetryInitialMS        int               `json:"vertex_retry_initial_ms"`
+	VertexRetryMaxMS            int               `json:"vertex_retry_max_ms"`
 }
 
 func Load() (Config, error) {
@@ -54,6 +57,9 @@ func defaults() Config {
 		GatewayAPIKeys:             []string{"dev-local-key"},
 		LogPath:                    "logs/requests.jsonl",
 		RequestTimeoutSeconds:      180,
+		VertexRetryMaxAttempts:     3,
+		VertexRetryInitialMS:       250,
+		VertexRetryMaxMS:           2000,
 	}
 }
 
@@ -96,6 +102,21 @@ func overrideFromEnv(c *Config) {
 			c.RequestTimeoutSeconds = n
 		}
 	}
+	if v := os.Getenv("VERTEX_RETRY_MAX_ATTEMPTS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.VertexRetryMaxAttempts = n
+		}
+	}
+	if v := os.Getenv("VERTEX_RETRY_INITIAL_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.VertexRetryInitialMS = n
+		}
+	}
+	if v := os.Getenv("VERTEX_RETRY_MAX_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.VertexRetryMaxMS = n
+		}
+	}
 }
 
 func (c Config) Validate() error {
@@ -113,6 +134,15 @@ func (c Config) Validate() error {
 	}
 	if c.RequestTimeoutSeconds <= 0 {
 		return errors.New("REQUEST_TIMEOUT_SECONDS must be positive")
+	}
+	if c.VertexRetryMaxAttempts <= 0 {
+		return errors.New("VERTEX_RETRY_MAX_ATTEMPTS must be positive")
+	}
+	if c.VertexRetryInitialMS <= 0 {
+		return errors.New("VERTEX_RETRY_INITIAL_MS must be positive")
+	}
+	if c.VertexRetryMaxMS <= 0 {
+		return errors.New("VERTEX_RETRY_MAX_MS must be positive")
 	}
 	return nil
 }

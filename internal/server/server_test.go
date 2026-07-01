@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -24,6 +25,18 @@ func (f fakeGemini) GenerateContent(ctx context.Context, model string, in gemini
 }
 func (f fakeGemini) StreamGenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, onChunk func(gemini.GenerateResponse) error) error {
 	return onChunk(gemini.GenerateResponse{Candidates: []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "hello"}}}}}})
+}
+func (f fakeGemini) CreateCachedContent(ctx context.Context, body json.RawMessage) (json.RawMessage, error) {
+	return json.RawMessage(`{"name":"projects/p/locations/global/cachedContents/cache-1"}`), nil
+}
+func (f fakeGemini) ListCachedContents(ctx context.Context, query url.Values) (json.RawMessage, error) {
+	return json.RawMessage(`{"cachedContents":[{"name":"projects/p/locations/global/cachedContents/cache-1"}]}`), nil
+}
+func (f fakeGemini) GetCachedContent(ctx context.Context, id string) (json.RawMessage, error) {
+	return json.RawMessage(`{"name":"projects/p/locations/global/cachedContents/` + id + `"}`), nil
+}
+func (f fakeGemini) DeleteCachedContent(ctx context.Context, id string) (json.RawMessage, error) {
+	return json.RawMessage(`{}`), nil
 }
 
 func testServer(t *testing.T) *Server {
@@ -83,6 +96,36 @@ func TestAllowUnauthenticated(t *testing.T) {
 	s.Routes().ServeHTTP(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCacheRoutes(t *testing.T) {
+	s := testServer(t)
+	req := httptest.NewRequest("POST", "/v1/caches", strings.NewReader(`{"model":"gemini-3.1-pro-preview","contents":[{"role":"user","parts":[{"text":"large context"}]}],"ttl":"3600s"}`))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("create status %d body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "cachedContents/cache-1") {
+		t.Fatalf("create body %s", w.Body.String())
+	}
+
+	req = httptest.NewRequest("GET", "/v1/caches", nil)
+	req.Header.Set("Authorization", "Bearer k")
+	w = httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "cachedContents") {
+		t.Fatalf("list status %d body %s", w.Code, w.Body.String())
+	}
+
+	req = httptest.NewRequest("DELETE", "/v1/caches/cache-1", nil)
+	req.Header.Set("Authorization", "Bearer k")
+	w = httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("delete status %d body %s", w.Code, w.Body.String())
 	}
 }
 

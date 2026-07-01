@@ -51,6 +51,10 @@ Every response includes `X-Request-ID`.
 | `GET` | `/healthz` | No | Health check. |
 | `GET` | `/v1/models` | Yes | Lists configured models. |
 | `GET` | `/v1/models/{model}` | Yes | Returns one configured model and known gateway/catalog metadata. |
+| `POST` | `/v1/caches` | Yes | Creates Vertex cached content. |
+| `GET` | `/v1/caches` | Yes | Lists Vertex cached content. |
+| `GET` | `/v1/caches/{cache}` | Yes | Gets one Vertex cached content resource. |
+| `DELETE` | `/v1/caches/{cache}` | Yes | Deletes one Vertex cached content resource. |
 | `POST` | `/v1/chat/completions` | Yes | Creates a non-streaming or streaming chat completion. |
 
 ## `GET /healthz`
@@ -150,6 +154,73 @@ curl -s http://localhost:8080/v1/models/gemini-2.5-flash \
 ```
 
 `supported_parameters` means parameters this gateway is prepared to accept and map for that model. Google Vertex publisher-model metadata currently exposes model presence, launch stage, version state, and UI/actions metadata, but it does not return a per-model list of supported generation arguments such as `frequencyPenalty` or `responseSchema`. Keep per-model parameter notes in `config/models.json` after reviewing Google model docs and live behavior.
+
+## Vertex Context Caches
+
+Byto exposes thin management endpoints for Vertex `cachedContents`. The gateway does not decide what to cache, when to cache, or how cache IDs are stored by your product. Apps own that logic. The gateway only authenticates the caller, forwards the cache request to Vertex, normalizes simple Gemini model IDs on create, and returns Vertex's JSON response.
+
+### `POST /v1/caches`
+
+Creates a Vertex cached content resource.
+
+The request body is the Vertex `CachedContent` JSON shape. `model` may be either a full Vertex model resource name or a Gemini model ID such as `gemini-2.5-flash`; simple model IDs are expanded to `projects/PROJECT/locations/LOCATION/publishers/google/models/MODEL`.
+
+```bash
+curl -s http://localhost:8080/v1/caches \
+  -H "Authorization: Bearer <gateway-api-key>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "displayName": "product-docs-v1",
+    "model": "gemini-2.5-flash",
+    "contents": [
+      {
+        "role": "user",
+        "parts": [
+          { "text": "Large shared context to cache..." }
+        ]
+      }
+    ],
+    "ttl": "3600s"
+  }' | jq
+```
+
+The response is the Vertex cached content object. Store its `name` in your app and pass it later through `extra_body.google.cached_content`.
+
+### `GET /v1/caches`
+
+Lists Vertex cached content for the configured project/location.
+
+```bash
+curl -s 'http://localhost:8080/v1/caches?page_size=20' \
+  -H "Authorization: Bearer <gateway-api-key>" | jq
+```
+
+Supported query aliases:
+
+| Query | Vertex Query |
+| --- | --- |
+| `page_size` | `pageSize` |
+| `page_token` | `pageToken` |
+
+Existing Vertex query names such as `pageSize` and `pageToken` are also passed through.
+
+### `GET /v1/caches/{cache}`
+
+Gets a single cache. `{cache}` may be the cache ID or a full Vertex resource name.
+
+```bash
+curl -s http://localhost:8080/v1/caches/CACHE_ID \
+  -H "Authorization: Bearer <gateway-api-key>" | jq
+```
+
+### `DELETE /v1/caches/{cache}`
+
+Deletes a single cache. `{cache}` may be the cache ID or a full Vertex resource name.
+
+```bash
+curl -s -X DELETE http://localhost:8080/v1/caches/CACHE_ID \
+  -H "Authorization: Bearer <gateway-api-key>" | jq
+```
 
 ## `POST /v1/chat/completions`
 
@@ -297,6 +368,8 @@ Pass a Vertex cached content resource through `extra_body.google.cached_content`
 }
 ```
 
+Vertex also performs implicit caching automatically for eligible repeated prompt prefixes. Explicit cache management is useful when an app wants predictable reuse of large shared context and wants to store/cache resource names itself.
+
 ## Model Resolution
 
 `model` is mandatory. Byto never chooses a default model.
@@ -331,6 +404,37 @@ Errors use this shape:
 | `405` | `method_not_allowed` | Unsupported method for endpoint. |
 | `500` | `server_error` | Server cannot stream the response. |
 | `502` | `vertex_error` | Vertex returned an error or could not be reached. |
+
+## Retries
+
+Byto retries only transient Vertex transport/upstream failures. This keeps retry behavior in the gateway while product and business decisions stay in the calling apps.
+
+Retried by default:
+
+- network/request errors before a response is returned
+- `408`
+- `429`
+- `500`
+- `502`
+- `503`
+- `504`
+
+Not retried:
+
+- `400` invalid request/model/parameters
+- `401` or `403` auth and permission errors
+- model safety/content responses returned as successful Vertex responses
+- response parsing errors after a streaming response has already started
+
+Retry settings:
+
+| Environment | Default | Description |
+| --- | --- | --- |
+| `VERTEX_RETRY_MAX_ATTEMPTS` | `3` | Total attempts including the first request. Set `1` to disable gateway retries. |
+| `VERTEX_RETRY_INITIAL_MS` | `250` | Initial exponential backoff delay. |
+| `VERTEX_RETRY_MAX_MS` | `2000` | Maximum backoff delay before jitter. |
+
+If Vertex sends `Retry-After`, the gateway honors it.
 
 ## Unsupported OpenAI Fields
 
