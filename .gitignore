@@ -6,4 +6,5 @@ logs/*.jsonl
 coverage.out
 bin/
 .cache/
+secrets/
 .DS_Store

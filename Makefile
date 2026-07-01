@@ -37,6 +37,35 @@ ifneq ($(filter 1 true yes,$(PROTECTED)),)
 SETUP_ARGS += --protected
 endif
 
+PRODUCTION_SETUP_ARGS=
+ifneq ($(strip $(PROJECT)),)
+PRODUCTION_SETUP_ARGS += --project $(PROJECT)
+endif
+ifneq ($(strip $(LOCATION)),)
+PRODUCTION_SETUP_ARGS += --location $(LOCATION)
+endif
+ifneq ($(strip $(MODEL)),)
+PRODUCTION_SETUP_ARGS += --model $(MODEL)
+endif
+ifneq ($(strip $(VERIFY_MODEL)),)
+PRODUCTION_SETUP_ARGS += --model $(VERIFY_MODEL)
+endif
+ifneq ($(strip $(SERVICE_ACCOUNT_NAME)),)
+PRODUCTION_SETUP_ARGS += --service-account $(SERVICE_ACCOUNT_NAME)
+endif
+ifneq ($(strip $(KEY_PATH)),)
+PRODUCTION_SETUP_ARGS += --key-path $(KEY_PATH)
+endif
+ifneq ($(strip $(API_KEY)),)
+PRODUCTION_SETUP_ARGS += --api-key $(API_KEY)
+endif
+ifneq ($(filter 1 true yes,$(NON_INTERACTIVE)),)
+PRODUCTION_SETUP_ARGS += --non-interactive
+endif
+ifneq ($(filter 1 true yes,$(SKIP_VERIFY)),)
+PRODUCTION_SETUP_ARGS += --skip-verify
+endif
+
 CLOUD_SETUP_ARGS=
 ifneq ($(strip $(PROJECT)),)
 CLOUD_SETUP_ARGS += --project $(PROJECT)
@@ -60,13 +89,14 @@ ifneq ($(filter 1 true yes,$(NON_INTERACTIVE)),)
 CLOUD_SETUP_ARGS += --non-interactive
 endif
 
-.PHONY: help setup setup-cloud cloud run build test test-race test-live clean fmt verify-gcp
+.PHONY: help setup setup-production production setup-cloud cloud run build test test-race test-live clean fmt verify-gcp
 
 help:
 	@echo "Byto Gateway"
 	@echo
 	@echo "Use one of these:"
 	@echo "  make setup PROJECT=your-gcp-project"
+	@echo "  make setup production PROJECT=your-gcp-project MODEL=gemini-2.5-flash"
 	@echo "  make setup PROJECT=your-gcp-project OPEN=1"
 	@echo "  make setup PROJECT=your-gcp-project PROTECTED=1"
 	@echo "  make setup-cloud PROJECT=your-gcp-project MODEL=gemini-2.5-flash"
@@ -79,11 +109,19 @@ help:
 	@echo "  make setup-cloud PROJECT=your-gcp-project MODEL=gemini-2.5-flash DEPLOY=1"
 
 setup:
-	@if [ -n "$(filter cloud,$(MAKECMDGOALS))" ] || [ "$(CLOUD)" = "1" ]; then \
+	@if [ -n "$(filter production,$(MAKECMDGOALS))" ] || [ "$(PRODUCTION)" = "1" ]; then \
+		./scripts/setup-production.sh $(PRODUCTION_SETUP_ARGS); \
+	elif [ -n "$(filter cloud,$(MAKECMDGOALS))" ] || [ "$(CLOUD)" = "1" ]; then \
 		./scripts/setup-cloud.sh $(CLOUD_SETUP_ARGS); \
 	else \
 		./setup.sh $(SETUP_ARGS); \
 	fi
+
+setup-production:
+	@./scripts/setup-production.sh $(PRODUCTION_SETUP_ARGS)
+
+production:
+	@:
 
 setup-cloud:
 	@./scripts/setup-cloud.sh $(CLOUD_SETUP_ARGS)
