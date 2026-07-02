@@ -66,6 +66,26 @@ ifneq ($(filter 1 true yes,$(SKIP_VERIFY)),)
 PRODUCTION_SETUP_ARGS += --skip-verify
 endif
 
+SWITCH_ARGS=
+ifneq ($(strip $(AUTH)),)
+SWITCH_ARGS += --auth $(AUTH)
+endif
+ifneq ($(strip $(MODE)),)
+SWITCH_ARGS += --auth $(MODE)
+endif
+ifneq ($(strip $(KEY_PATH)),)
+SWITCH_ARGS += --key-path $(KEY_PATH)
+endif
+ifneq ($(strip $(MODEL)),)
+SWITCH_ARGS += --model $(MODEL)
+endif
+ifneq ($(strip $(VERIFY_MODEL)),)
+SWITCH_ARGS += --model $(VERIFY_MODEL)
+endif
+ifneq ($(filter 1 true yes,$(NON_INTERACTIVE)),)
+SWITCH_ARGS += --non-interactive
+endif
+
 CLOUD_SETUP_ARGS=
 ifneq ($(strip $(PROJECT)),)
 CLOUD_SETUP_ARGS += --project $(PROJECT)
@@ -89,7 +109,7 @@ ifneq ($(filter 1 true yes,$(NON_INTERACTIVE)),)
 CLOUD_SETUP_ARGS += --non-interactive
 endif
 
-.PHONY: help setup setup-production production setup-cloud cloud run build test test-race test-live clean fmt verify-gcp
+.PHONY: help setup setup-production production setup-cloud cloud switch run build test test-race test-live clean fmt verify-gcp
 
 help:
 	@echo "Byto Gateway"
@@ -97,6 +117,8 @@ help:
 	@echo "Use one of these:"
 	@echo "  make setup PROJECT=your-gcp-project"
 	@echo "  make setup production PROJECT=your-gcp-project MODEL=gemini-2.5-flash"
+	@echo "  make switch AUTH=service MODEL=gemini-2.5-flash"
+	@echo "  make switch AUTH=token MODEL=gemini-2.5-flash"
 	@echo "  make setup PROJECT=your-gcp-project OPEN=1"
 	@echo "  make setup PROJECT=your-gcp-project PROTECTED=1"
 	@echo "  make setup-cloud PROJECT=your-gcp-project MODEL=gemini-2.5-flash"
@@ -128,6 +150,9 @@ setup-cloud:
 
 cloud:
 	@:
+
+switch:
+	@./scripts/switch-auth.sh $(SWITCH_ARGS)
 
 run:
 	go run ./cmd/gateway

@@ -125,6 +125,26 @@ prompt() {
   printf '%s' "$value"
 }
 
+confirm() {
+  local label="$1"
+  local default="${2:-no}"
+  local answer=""
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    return 1
+  fi
+  if [ "$HAS_TTY" -ne 1 ]; then
+    return 1
+  fi
+  read -r -p "$label [$default]: " answer </dev/tty
+  if [ -z "$answer" ]; then
+    answer="$default"
+  fi
+  case "$answer" in
+    y|Y|yes|YES|Yes) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 run_quiet() {
   local label="$1"
   shift
@@ -203,6 +223,13 @@ service_key_valid() {
   [ -s "$KEY_PATH" ] && grep -q '"client_email"' "$KEY_PATH" && grep -q '"private_key"' "$KEY_PATH"
 }
 
+absolute_key_path() {
+  case "$KEY_PATH" in
+    /*) printf '%s' "$KEY_PATH" ;;
+    *) printf '%s/%s' "$ROOT_DIR" "$KEY_PATH" ;;
+  esac
+}
+
 create_service_account_key() {
   mkdir -p "$SETUP_LOG_DIR"
   local log="$SETUP_LOG_DIR/$(date +%Y%m%d%H%M%S)-create-service-account-key.log"
@@ -213,11 +240,96 @@ create_service_account_key() {
   fi
   rm -f "$KEY_PATH"
   if grep -q 'constraints/iam.disableServiceAccountKeyCreation' "$log"; then
-    fail "Google org policy blocks service-account key creation: constraints/iam.disableServiceAccountKeyCreation. Use an existing valid key at KEY_PATH, change the org policy, or deploy on Google infrastructure with metadata auth."
+    warn "Oh no, your Google organization policy does not allow service account key creation."
+    note "Blocked policy: constraints/iam.disableServiceAccountKeyCreation"
+    if confirm "Change this project policy now so setup can create the key? yes/no" "yes"; then
+      change_service_account_key_policy
+      if gcloud iam service-accounts keys create "$KEY_PATH" --iam-account="$SA_EMAIL" >"$log" 2>&1; then
+        ok "Create service account key"
+        chmod 600 "$KEY_PATH" 2>/dev/null || true
+        return
+      fi
+      rm -f "$KEY_PATH"
+      echo "Log: $log" >&2
+      tail -n 80 "$log" >&2 || true
+      fail "Policy change was attempted, but key creation still failed."
+    fi
+    fail "Production setup needs either an existing valid key at KEY_PATH or permission to change constraints/iam.disableServiceAccountKeyCreation."
   fi
   echo "Log: $log" >&2
   tail -n 80 "$log" >&2 || true
   fail "Could not create service account key"
+}
+
+change_service_account_key_policy() {
+  run_quiet "Enable Organization Policy API" gcloud services enable orgpolicy.googleapis.com --project="$PROJECT_ID"
+  mkdir -p "$SETUP_LOG_DIR"
+  local log="$SETUP_LOG_DIR/$(date +%Y%m%d%H%M%S)-allow-service-account-key-creation.log"
+  if gcloud resource-manager org-policies disable-enforce constraints/iam.disableServiceAccountKeyCreation --project="$PROJECT_ID" --quiet >"$log" 2>&1; then
+    ok "Allowed service account key creation for this project"
+    return
+  fi
+  if grep -q 'setOrgPolicy' "$log" || grep -q 'does not have permission' "$log"; then
+    warn "Your active gcloud account cannot change org policy yet."
+    note "Missing permission: setOrgPolicy"
+    note "Needed role: roles/orgpolicy.policyAdmin"
+    if confirm "Grant roles/orgpolicy.policyAdmin to the active gcloud account and retry? yes/no" "yes"; then
+      grant_org_policy_admin
+      if gcloud resource-manager org-policies disable-enforce constraints/iam.disableServiceAccountKeyCreation --project="$PROJECT_ID" --quiet >"$log" 2>&1; then
+        ok "Allowed service account key creation for this project"
+        return
+      fi
+      echo "Log: $log" >&2
+      tail -n 80 "$log" >&2 || true
+      fail "Granted roles/orgpolicy.policyAdmin was attempted, but the policy change still failed."
+    fi
+    fail "Cannot change constraints/iam.disableServiceAccountKeyCreation without roles/orgpolicy.policyAdmin or equivalent permission. Log: $log"
+  fi
+  echo "Log: $log" >&2
+  tail -n 80 "$log" >&2 || true
+  fail "Could not change service account key creation policy"
+}
+
+active_gcloud_member() {
+  local account
+  account="$(gcloud auth list --filter=status:ACTIVE --format='value(account)' | head -n 1)"
+  if [ -z "$account" ]; then
+    fail "No active gcloud account. Run gcloud auth login first."
+  fi
+  if [[ "$account" == *".gserviceaccount.com" ]]; then
+    printf 'serviceAccount:%s' "$account"
+  else
+    printf 'user:%s' "$account"
+  fi
+}
+
+grant_org_policy_admin() {
+  local member
+  member="$(active_gcloud_member)"
+  local ancestor_type ancestor_id
+  read -r ancestor_type ancestor_id < <(gcloud projects get-ancestors "$PROJECT_ID" --format='value(type,id)' | awk '$1 == "folder" || $1 == "organization" { print $1, $2; exit }')
+  if [ -z "${ancestor_type:-}" ] || [ -z "${ancestor_id:-}" ]; then
+    fail "Could not find a folder or organization ancestor for this project. Grant roles/orgpolicy.policyAdmin manually where this project is governed."
+  fi
+  mkdir -p "$SETUP_LOG_DIR"
+  local log="$SETUP_LOG_DIR/$(date +%Y%m%d%H%M%S)-grant-org-policy-admin.log"
+  case "$ancestor_type" in
+    folder)
+      if gcloud resource-manager folders add-iam-policy-binding "$ancestor_id" --member="$member" --role=roles/orgpolicy.policyAdmin --quiet >"$log" 2>&1; then
+        ok "Granted roles/orgpolicy.policyAdmin to $member on folder $ancestor_id"
+        return
+      fi
+      ;;
+    organization)
+      if gcloud organizations add-iam-policy-binding "$ancestor_id" --member="$member" --role=roles/orgpolicy.policyAdmin --quiet >"$log" 2>&1; then
+        ok "Granted roles/orgpolicy.policyAdmin to $member on organization $ancestor_id"
+        return
+      fi
+      ;;
+  esac
+  echo "Log: $log" >&2
+  tail -n 80 "$log" >&2 || true
+  fail "Could not grant roles/orgpolicy.policyAdmin on $ancestor_type $ancestor_id. Your active account needs permission to change IAM on that ancestor, such as Organization Admin or Folder Admin."
 }
 
 load_existing_env() {
@@ -362,7 +474,7 @@ if [ "$SKIP_VERIFY" -eq 0 ] && [ -n "$VERIFY_MODEL" ]; then
     GOOGLE_CLOUD_LOCATION="$LOCATION" \
     GATEWAY_API_KEYS="$API_KEYS" \
     GATEWAY_ALLOW_UNAUTHENTICATED=false \
-    GOOGLE_APPLICATION_CREDENTIALS="$KEY_PATH" \
+    GOOGLE_APPLICATION_CREDENTIALS="$(absolute_key_path)" \
     VERTEX_ACCESS_TOKEN= \
     MODEL_CATALOG_PATH= \
     ALLOW_ANY_GEMINI_MODEL=true \
