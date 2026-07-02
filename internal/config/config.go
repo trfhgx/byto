@@ -22,6 +22,7 @@ type Config struct {
 	GatewayAPIKeys              []string          `json:"gateway_api_keys"`
 	GatewayAllowUnauthenticated bool              `json:"gateway_allow_unauthenticated"`
 	LogPath                     string            `json:"log_path"`
+	LogMaxBytes                 int64             `json:"log_max_bytes"`
 	RequestTimeoutSeconds       int               `json:"request_timeout_seconds"`
 	VertexRetryMaxAttempts      int               `json:"vertex_retry_max_attempts"`
 	VertexRetryInitialMS        int               `json:"vertex_retry_initial_ms"`
@@ -56,6 +57,7 @@ func defaults() Config {
 		VertexBaseURL:              "https://aiplatform.googleapis.com",
 		GatewayAPIKeys:             []string{"dev-local-key"},
 		LogPath:                    "logs/requests.jsonl",
+		LogMaxBytes:                100 * 1024 * 1024,
 		RequestTimeoutSeconds:      180,
 		VertexRetryMaxAttempts:     3,
 		VertexRetryInitialMS:       250,
@@ -97,6 +99,11 @@ func overrideFromEnv(c *Config) {
 	if v := os.Getenv("LOG_PATH"); v != "" {
 		c.LogPath = v
 	}
+	if v := os.Getenv("LOG_MAX_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			c.LogMaxBytes = n
+		}
+	}
 	if v := os.Getenv("REQUEST_TIMEOUT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			c.RequestTimeoutSeconds = n
@@ -131,6 +138,9 @@ func (c Config) Validate() error {
 	}
 	if c.VertexBaseURL == "" {
 		return errors.New("VERTEX_BASE_URL is required")
+	}
+	if c.LogMaxBytes <= 0 {
+		return errors.New("LOG_MAX_BYTES must be positive")
 	}
 	if c.RequestTimeoutSeconds <= 0 {
 		return errors.New("REQUEST_TIMEOUT_SECONDS must be positive")

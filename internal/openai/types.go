@@ -6,6 +6,8 @@ type ChatCompletionRequest struct {
 	Model            string          `json:"model"`
 	Messages         []Message       `json:"messages"`
 	Stream           bool            `json:"stream,omitempty"`
+	ServiceTier      string          `json:"service_tier,omitempty"`
+	ReasoningEffort  string          `json:"reasoning_effort,omitempty"`
 	Temperature      *float64        `json:"temperature,omitempty"`
 	TopP             *float64        `json:"top_p,omitempty"`
 	MaxTokens        *int            `json:"max_tokens,omitempty"`
@@ -26,7 +28,10 @@ type ExtraBody struct {
 }
 
 type GoogleExtra struct {
-	CachedContent string `json:"cached_content,omitempty"`
+	CachedContent   string `json:"cached_content,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	ThinkingBudget  *int   `json:"thinking_budget,omitempty"`
+	IncludeThoughts *bool  `json:"include_thoughts,omitempty"`
 }
 
 type ChatCompletionResponse struct {
@@ -50,10 +55,16 @@ type ResponseMessage struct {
 }
 
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-	CachedTokens     int `json:"cached_tokens,omitempty"`
+	PromptTokens            int                      `json:"prompt_tokens"`
+	CompletionTokens        int                      `json:"completion_tokens"`
+	TotalTokens             int                      `json:"total_tokens"`
+	CachedTokens            int                      `json:"cached_tokens,omitempty"`
+	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
+	TrafficType             string                   `json:"traffic_type,omitempty"`
+}
+
+type CompletionTokensDetails struct {
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
 type ErrorResponse struct {

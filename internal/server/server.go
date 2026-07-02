@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
@@ -24,8 +26,8 @@ import (
 )
 
 type GeminiClient interface {
-	GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest) (gemini.GenerateResponse, error)
-	StreamGenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, onChunk func(gemini.GenerateResponse) error) error
+	GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error)
+	StreamGenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions, onChunk func(gemini.GenerateResponse) error) error
 	CreateCachedContent(ctx context.Context, body json.RawMessage) (json.RawMessage, error)
 	ListCachedContents(ctx context.Context, query url.Values) (json.RawMessage, error)
 	GetCachedContent(ctx context.Context, id string) (json.RawMessage, error)
@@ -66,7 +68,7 @@ func NewFromConfig(cfg config.Config) (*Server, error) {
 			log.Printf("model catalog load warning path=%s err=%v", cfg.ModelCatalogPath, err)
 		}
 	}
-	logger, err := gwlog.New(cfg.LogPath)
+	logger, err := gwlog.New(cfg.LogPath, cfg.LogMaxBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +111,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/caches", s.caches)
 	mux.HandleFunc("/v1/caches/", s.cache)
 	mux.HandleFunc("/v1/chat/completions", s.chatCompletions)
-	return requestID(mux)
+	return requestID(s.accessLog(recoverPanic(mux)))
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
@@ -249,6 +251,15 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	logEntry.VertexModel = model
 	logEntry.Stream = req.Stream
 
+	serviceTier, requestOpts, err := vertexRequestOptions(req.ServiceTier)
+	if err != nil {
+		logEntry.Status = http.StatusBadRequest
+		logEntry.Error = err.Error()
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+		return
+	}
+	logEntry.ServiceTier = serviceTier
+
 	greq, err := gemini.FromOpenAI(req)
 	if err != nil {
 		logEntry.Status = http.StatusBadRequest
@@ -256,19 +267,28 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
 		return
 	}
+	reasoningEffort, err := s.applyReasoningConfig(model, req, &greq)
+	if err != nil {
+		logEntry.Status = http.StatusBadRequest
+		logEntry.Error = err.Error()
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+		return
+	}
+	logEntry.ReasoningEffort = reasoningEffort
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout())
 	defer cancel()
 	if req.Stream {
-		s.stream(ctx, w, model, reqID, greq, &logEntry, start)
+		s.stream(ctx, w, model, reqID, greq, requestOpts, &logEntry, start)
 		return
 	}
-	gresp, err := s.gemini.GenerateContent(ctx, model, greq)
+	gresp, err := s.gemini.GenerateContent(ctx, model, greq, requestOpts)
 	logEntry.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
-		logEntry.Status = http.StatusBadGateway
+		logEntry.Status = vertexGatewayStatus(err)
 		logEntry.Error = err.Error()
-		writeError(w, http.StatusBadGateway, err.Error(), "vertex_error")
+		setUpstreamLog(&logEntry, err)
+		writeError(w, logEntry.Status, err.Error(), "vertex_error")
 		return
 	}
 	logEntry.Status = http.StatusOK
@@ -276,15 +296,21 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	logEntry.CompletionTokens = gresp.UsageMetadata.CandidatesTokenCount
 	logEntry.TotalTokens = gresp.UsageMetadata.TotalTokenCount
 	logEntry.CachedTokens = gresp.UsageMetadata.CachedContentTokenCount
+	logEntry.ThoughtsTokens = gresp.UsageMetadata.ThoughtsTokenCount
+	logEntry.TrafficType = gresp.UsageMetadata.TrafficType
+	var completionDetails *openai.CompletionTokensDetails
+	if logEntry.ThoughtsTokens > 0 {
+		completionDetails = &openai.CompletionTokensDetails{ReasoningTokens: logEntry.ThoughtsTokens}
+	}
 	resp := openai.ChatCompletionResponse{
 		ID: "chatcmpl-" + reqID, Object: "chat.completion", Created: time.Now().Unix(), Model: model,
 		Choices: []openai.Choice{{Index: 0, Message: openai.ResponseMessage{Role: "assistant", Content: gemini.TextFromResponse(gresp)}, FinishReason: gemini.FinishReason(gresp)}},
-		Usage:   openai.Usage{PromptTokens: logEntry.PromptTokens, CompletionTokens: logEntry.CompletionTokens, TotalTokens: logEntry.TotalTokens, CachedTokens: logEntry.CachedTokens},
+		Usage:   openai.Usage{PromptTokens: logEntry.PromptTokens, CompletionTokens: logEntry.CompletionTokens, TotalTokens: logEntry.TotalTokens, CachedTokens: logEntry.CachedTokens, CompletionTokensDetails: completionDetails, TrafficType: logEntry.TrafficType},
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID string, greq gemini.GenerateRequest, logEntry *gwlog.RequestLog, start time.Time) {
+func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID string, greq gemini.GenerateRequest, opts gemini.RequestOptions, logEntry *gwlog.RequestLog, start time.Time) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		logEntry.Status = http.StatusInternalServerError
@@ -298,12 +324,16 @@ func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID
 	created := time.Now().Unix()
 	logEntry.Status = http.StatusOK
 	first := true
-	err := s.gemini.StreamGenerateContent(ctx, model, greq, func(chunk gemini.GenerateResponse) error {
+	err := s.gemini.StreamGenerateContent(ctx, model, greq, opts, func(chunk gemini.GenerateResponse) error {
 		text := gemini.TextFromResponse(chunk)
 		logEntry.PromptTokens += chunk.UsageMetadata.PromptTokenCount
 		logEntry.CompletionTokens += chunk.UsageMetadata.CandidatesTokenCount
 		logEntry.TotalTokens += chunk.UsageMetadata.TotalTokenCount
 		logEntry.CachedTokens += chunk.UsageMetadata.CachedContentTokenCount
+		logEntry.ThoughtsTokens += chunk.UsageMetadata.ThoughtsTokenCount
+		if chunk.UsageMetadata.TrafficType != "" {
+			logEntry.TrafficType = chunk.UsageMetadata.TrafficType
+		}
 		if first {
 			first = false
 			sendSSE(w, openai.StreamChunk{ID: "chatcmpl-" + reqID, Object: "chat.completion.chunk", Created: created, Model: model, Choices: []openai.StreamChoice{{Index: 0, Delta: openai.StreamDelta{Role: "assistant"}, FinishReason: nil}}})
@@ -317,6 +347,7 @@ func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID
 	logEntry.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
 		logEntry.Error = err.Error()
+		setUpstreamLog(logEntry, err)
 		log.Printf("stream error request_id=%s err=%v", reqID, err)
 		return
 	}
@@ -345,6 +376,36 @@ func (s *Server) writeVertexProxyResult(w http.ResponseWriter, out json.RawMessa
 		return
 	}
 	writeRawJSON(w, http.StatusOK, out)
+}
+
+func setUpstreamLog(entry *gwlog.RequestLog, err error) {
+	if ve, ok := err.(*gemini.VertexError); ok {
+		entry.UpstreamOperation = ve.Operation
+		entry.UpstreamStatus = ve.Status
+		entry.UpstreamClass = classifyUpstreamStatus(ve.Status)
+	}
+}
+
+func vertexGatewayStatus(err error) int {
+	if ve, ok := err.(*gemini.VertexError); ok && ve.Status == http.StatusTooManyRequests {
+		return http.StatusTooManyRequests
+	}
+	return http.StatusBadGateway
+}
+
+func classifyUpstreamStatus(status int) string {
+	switch {
+	case status == http.StatusTooManyRequests:
+		return "rate_limited"
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return "auth_or_permission"
+	case status >= 400 && status < 500:
+		return "client_error"
+	case status >= 500:
+		return "upstream_error"
+	default:
+		return "unknown"
+	}
 }
 
 func (s *Server) setModelCatalog(c catalog.Catalog) {
@@ -422,6 +483,140 @@ func (s *Server) authorized(r *http.Request) bool {
 	return ok
 }
 
+func authFailureReason(r *http.Request) string {
+	authz := r.Header.Get("Authorization")
+	if strings.TrimSpace(authz) == "" {
+		return "missing_authorization"
+	}
+	if !strings.HasPrefix(authz, "Bearer ") {
+		return "malformed_authorization"
+	}
+	if strings.TrimSpace(strings.TrimPrefix(authz, "Bearer ")) == "" {
+		return "empty_bearer_token"
+	}
+	return "invalid_bearer_token"
+}
+
+func vertexRequestOptions(serviceTier string) (string, gemini.RequestOptions, error) {
+	tier := strings.ToLower(strings.TrimSpace(serviceTier))
+	switch tier {
+	case "", "auto", "high", "priority":
+		return "priority", gemini.RequestOptions{LLMRequestType: "shared", LLMSharedRequestType: "priority"}, nil
+	case "default", "standard", "on_demand", "on-demand":
+		return "standard", gemini.RequestOptions{LLMRequestType: "shared"}, nil
+	case "flex":
+		return "flex", gemini.RequestOptions{LLMRequestType: "shared", LLMSharedRequestType: "flex"}, nil
+	case "dedicated", "provisioned", "provisioned_throughput", "provisioned-throughput":
+		return "dedicated", gemini.RequestOptions{LLMRequestType: "dedicated"}, nil
+	default:
+		return "", gemini.RequestOptions{}, fmt.Errorf("unsupported service_tier %q; use priority, standard, flex, or dedicated", serviceTier)
+	}
+}
+
+func (s *Server) applyReasoningConfig(model string, req openai.ChatCompletionRequest, greq *gemini.GenerateRequest) (string, error) {
+	effort, err := requestedReasoningEffort(req)
+	if err != nil {
+		return "", err
+	}
+	thinkingBudget := req.ExtraBody.Google.ThinkingBudget
+	includeThoughts := req.ExtraBody.Google.IncludeThoughts
+	if effort == "" && thinkingBudget == nil && includeThoughts == nil {
+		return "", nil
+	}
+	if greq.GenerationConfig == nil {
+		greq.GenerationConfig = &gemini.GenerationConfig{}
+	}
+	greq.GenerationConfig.ThinkingConfig = &gemini.ThinkingConfig{IncludeThoughts: includeThoughts}
+	if thinkingBudget != nil {
+		if *thinkingBudget < 0 {
+			return "", errors.New("extra_body.google.thinking_budget must be non-negative")
+		}
+		greq.GenerationConfig.ThinkingConfig.ThinkingBudget = thinkingBudget
+		return effort, nil
+	}
+	if effort == "" {
+		return "", nil
+	}
+	budget, err := s.reasoningBudget(model, effort)
+	if err != nil {
+		return "", err
+	}
+	greq.GenerationConfig.ThinkingConfig.ThinkingBudget = &budget
+	return effort, nil
+}
+
+func requestedReasoningEffort(req openai.ChatCompletionRequest) (string, error) {
+	top := normalizeReasoningEffort(req.ReasoningEffort)
+	google := normalizeReasoningEffort(req.ExtraBody.Google.ReasoningEffort)
+	if top != "" && google != "" && top != google {
+		return "", fmt.Errorf("conflicting reasoning_effort values %q and %q", req.ReasoningEffort, req.ExtraBody.Google.ReasoningEffort)
+	}
+	if top != "" {
+		return top, nil
+	}
+	return google, nil
+}
+
+func normalizeReasoningEffort(v string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "":
+		return ""
+	case "none", "off", "disabled":
+		return "off"
+	case "minimal", "low":
+		return "low"
+	case "medium":
+		return "medium"
+	case "hard", "high":
+		return "high"
+	default:
+		return strings.ToLower(strings.TrimSpace(v))
+	}
+}
+
+func (s *Server) reasoningBudget(model, effort string) (int, error) {
+	canonical := normalizeReasoningEffort(effort)
+	if canonical == "" {
+		return 0, nil
+	}
+	s.catalogMu.RLock()
+	m, ok := s.modelCatalog[model]
+	s.catalogMu.RUnlock()
+	if ok {
+		if len(m.Capabilities.ReasoningEffort) > 0 && !containsReasoningEffort(m.Capabilities.ReasoningEffort, canonical) {
+			return 0, fmt.Errorf("reasoning_effort %q is not supported by model %q", effort, model)
+		}
+		if m.Capabilities.ReasoningBudgets != nil {
+			if budget, ok := m.Capabilities.ReasoningBudgets[canonical]; ok {
+				return budget, nil
+			}
+		}
+	}
+	budget, ok := defaultReasoningBudgets()[canonical]
+	if !ok {
+		return 0, fmt.Errorf("unsupported reasoning_effort %q; use off, low, medium, or high", effort)
+	}
+	return budget, nil
+}
+
+func containsReasoningEffort(values []string, effort string) bool {
+	for _, v := range values {
+		if normalizeReasoningEffort(v) == effort {
+			return true
+		}
+	}
+	return false
+}
+
+func defaultReasoningBudgets() map[string]int {
+	return map[string]int{
+		"off":    0,
+		"low":    256,
+		"medium": 1024,
+		"high":   4096,
+	}
+}
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
@@ -455,6 +650,100 @@ func requestID(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id)))
 	})
 }
+
+type panicKey struct{}
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (w *statusRecorder) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusRecorder) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *statusRecorder) Flush() {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func recoverPanic(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer func() {
+			if v := recover(); v != nil {
+				log.Printf("panic recovered request_id=%s method=%s path=%s panic=%v", getRequestID(r), r.Method, r.URL.Path, v)
+				if flag, ok := r.Context().Value(panicKey{}).(*bool); ok {
+					*flag = true
+				}
+				writeError(w, http.StatusInternalServerError, "internal server error", "server_error")
+			}
+		}()
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) accessLog(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		start := time.Now()
+		panicked := false
+		r = r.WithContext(context.WithValue(r.Context(), panicKey{}, &panicked))
+		rec := &statusRecorder{ResponseWriter: w}
+		next.ServeHTTP(rec, r)
+		status := rec.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		entry := gwlog.AccessLog{
+			Timestamp: start.UTC(),
+			RequestID: getRequestID(r),
+			Method:    r.Method,
+			Path:      r.URL.Path,
+			RemoteIP:  remoteIP(r),
+			UserAgent: r.UserAgent(),
+			Status:    status,
+			LatencyMS: time.Since(start).Milliseconds(),
+		}
+		if status == http.StatusUnauthorized {
+			entry.AuthFailure = authFailureReason(r)
+		}
+		if panicked {
+			entry.Panic = true
+		}
+		s.logger.WriteAccess(entry)
+	})
+}
+
+func remoteIP(r *http.Request) string {
+	if v := strings.TrimSpace(r.Header.Get("X-Forwarded-For")); v != "" {
+		if i := strings.Index(v, ","); i >= 0 {
+			return strings.TrimSpace(v[:i])
+		}
+		return v
+	}
+	if v := strings.TrimSpace(r.Header.Get("X-Real-IP")); v != "" {
+		return v
+	}
+	host := r.RemoteAddr
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return host
+}
+
 func getRequestID(r *http.Request) string {
 	if v, ok := r.Context().Value(requestIDKey{}).(string); ok {
 		return v

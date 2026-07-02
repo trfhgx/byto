@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-06-30T17:34:09.780454Z",
+  "updated_at": "2026-07-02T17:18:11.199533Z",
   "source": "vertex-live-refresh",
   "models": [
     {
@@ -18,7 +18,7 @@
       ],
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-2.0-flash-001",
@@ -34,7 +34,7 @@
       ],
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-2.0-flash-lite-001",
@@ -45,7 +45,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-2.5-flash",
@@ -56,7 +56,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-2.5-flash-lite",
@@ -67,7 +67,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-2.5-flash-preview-04-17",
@@ -81,7 +81,7 @@
       ],
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-2.5-flash-tts",
@@ -92,7 +92,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-2.5-pro",
@@ -103,7 +103,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-2.5-pro-exp-03-25",
@@ -119,7 +119,7 @@
       ],
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-2.5-pro-tts",
@@ -130,7 +130,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-3-flash-preview",
@@ -142,9 +142,15 @@
       "launch_stage": "PUBLIC_PREVIEW",
       "capabilities": {
         "reasoning_effort": [
+          "off",
           "low",
           "medium"
         ],
+        "reasoning_budgets": {
+          "low": 256,
+          "medium": 1024,
+          "off": 0
+        },
         "input": [
           "text"
         ],
@@ -156,6 +162,8 @@
           "model",
           "messages",
           "stream",
+          "service_tier",
+          "reasoning_effort",
           "temperature",
           "top_p",
           "max_tokens",
@@ -163,11 +171,14 @@
           "presence_penalty",
           "stop",
           "seed",
-          "extra_body.google.cached_content"
+          "extra_body.google.cached_content",
+          "extra_body.google.reasoning_effort",
+          "extra_body.google.thinking_budget",
+          "extra_body.google.include_thoughts"
         ]
       },
       "notes": "Fast/low-latency profile. Review live Vertex metadata for production before relying on preview models.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-3-pro-image",
@@ -178,7 +189,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-3.1-flash-image",
@@ -189,7 +200,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-3.1-flash-image-preview",
@@ -200,7 +211,7 @@
       "launch_stage": "PUBLIC_PREVIEW",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-3.1-flash-lite",
@@ -211,7 +222,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-3.1-flash-lite-image",
@@ -222,7 +233,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-3.1-flash-lite-preview",
@@ -233,7 +244,7 @@
       "launch_stage": "PUBLIC_PREVIEW",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-3.1-pro-preview",
@@ -245,20 +256,45 @@
       "launch_stage": "PUBLIC_PREVIEW",
       "capabilities": {
         "reasoning_effort": [
+          "off",
           "low",
           "medium",
-          "hard"
+          "high"
         ],
+        "reasoning_budgets": {
+          "high": 4096,
+          "low": 256,
+          "medium": 1024,
+          "off": 0
+        },
         "input": [
           "text"
         ],
         "output": [
           "text"
         ],
-        "streaming": true
+        "streaming": true,
+        "generation_parameters": [
+          "model",
+          "messages",
+          "stream",
+          "service_tier",
+          "reasoning_effort",
+          "temperature",
+          "top_p",
+          "max_tokens",
+          "frequency_penalty",
+          "presence_penalty",
+          "stop",
+          "seed",
+          "extra_body.google.cached_content",
+          "extra_body.google.reasoning_effort",
+          "extra_body.google.thinking_budget",
+          "extra_body.google.include_thoughts"
+        ]
       },
       "notes": "Higher-reasoning profile. Review live Vertex metadata for production before relying on preview models.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-3.1-pro-preview-customtools",
@@ -269,10 +305,17 @@
       "available": false,
       "capabilities": {
         "reasoning_effort": [
+          "off",
           "low",
           "medium",
-          "hard"
+          "high"
         ],
+        "reasoning_budgets": {
+          "high": 4096,
+          "low": 256,
+          "medium": 1024,
+          "off": 0
+        },
         "input": [
           "text"
         ],
@@ -293,7 +336,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-embedding-2",
@@ -304,7 +347,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     },
     {
       "id": "gemini-live-2.5-flash-native-audio",
@@ -315,7 +358,7 @@
       "launch_stage": "GA",
       "capabilities": {},
       "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-06-30T17:34:09.780438Z"
+      "last_seen_at": "2026-07-02T17:18:11.199527Z"
     }
   ]
 }

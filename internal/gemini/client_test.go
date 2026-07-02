@@ -59,7 +59,7 @@ func TestGenerateContentRetriesTransientStatus(t *testing.T) {
 
 	c := NewTestClient(ts.URL, time.Second, staticToken("tok"), "p", "global")
 	c.retry = RetryConfig{MaxAttempts: 2, InitialDelay: time.Millisecond, MaxDelay: time.Millisecond}
-	resp, err := c.GenerateContent(context.Background(), "gemini-test", GenerateRequest{Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}}})
+	resp, err := c.GenerateContent(context.Background(), "gemini-test", GenerateRequest{Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}}}, RequestOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +68,29 @@ func TestGenerateContentRetriesTransientStatus(t *testing.T) {
 	}
 	if TextFromResponse(resp) != "ok" {
 		t.Fatalf("response %#v", resp)
+	}
+}
+
+func TestGenerateContentSendsPriorityHeaders(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-Vertex-AI-LLM-Request-Type"); got != "shared" {
+			t.Fatalf("request type %q", got)
+		}
+		if got := r.Header.Get("X-Vertex-AI-LLM-Shared-Request-Type"); got != "priority" {
+			t.Fatalf("shared request type %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2,"trafficType":"ON_DEMAND_PRIORITY"}}`))
+	}))
+	defer ts.Close()
+
+	c := NewTestClient(ts.URL, time.Second, staticToken("tok"), "p", "global")
+	resp, err := c.GenerateContent(context.Background(), "gemini-test", GenerateRequest{Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}}}, RequestOptions{LLMRequestType: "shared", LLMSharedRequestType: "priority"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.UsageMetadata.TrafficType != "ON_DEMAND_PRIORITY" {
+		t.Fatalf("traffic type %q", resp.UsageMetadata.TrafficType)
 	}
 }
 
@@ -81,7 +104,26 @@ func TestGenerateContentDoesNotRetryBadRequest(t *testing.T) {
 
 	c := NewTestClient(ts.URL, time.Second, staticToken("tok"), "p", "global")
 	c.retry = RetryConfig{MaxAttempts: 3, InitialDelay: time.Millisecond, MaxDelay: time.Millisecond}
-	_, err := c.GenerateContent(context.Background(), "gemini-test", GenerateRequest{Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}}})
+	_, err := c.GenerateContent(context.Background(), "gemini-test", GenerateRequest{Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}}}, RequestOptions{})
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts %d", attempts)
+	}
+}
+
+func TestGenerateContentDoesNotRetryResourceExhausted(t *testing.T) {
+	attempts := 0
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		http.Error(w, `{"error":{"status":"RESOURCE_EXHAUSTED"}}`, http.StatusTooManyRequests)
+	}))
+	defer ts.Close()
+
+	c := NewTestClient(ts.URL, time.Second, staticToken("tok"), "p", "global")
+	c.retry = RetryConfig{MaxAttempts: 3, InitialDelay: time.Millisecond, MaxDelay: time.Millisecond}
+	_, err := c.GenerateContent(context.Background(), "gemini-test", GenerateRequest{Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}}}, RequestOptions{})
 	if err == nil {
 		t.Fatal("expected error")
 	}

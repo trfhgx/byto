@@ -9,6 +9,7 @@
   "gateway_api_keys": ["dev-local-key"],
   "gateway_allow_unauthenticated": false,
   "log_path": "logs/requests.jsonl",
+  "log_max_bytes": 104857600,
   "request_timeout_seconds": 180,
   "vertex_retry_max_attempts": 3,
   "vertex_retry_initial_ms": 250,

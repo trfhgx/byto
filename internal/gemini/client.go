@@ -60,14 +60,14 @@ func NewClient(cfg config.Config, tokens auth.TokenProvider) *Client {
 	}
 }
 
-func (c *Client) GenerateContent(ctx context.Context, model string, in GenerateRequest) (GenerateResponse, error) {
+func (c *Client) GenerateContent(ctx context.Context, model string, in GenerateRequest, opts RequestOptions) (GenerateResponse, error) {
 	var out GenerateResponse
 	body, err := json.Marshal(in)
 	if err != nil {
 		return out, err
 	}
 	u := c.modelMethodURL(model, "generateContent")
-	resp, err := c.do(ctx, http.MethodPost, u, body, "generateContent")
+	resp, err := c.do(ctx, http.MethodPost, u, body, "generateContent", opts)
 	if err != nil {
 		return out, err
 	}
@@ -82,13 +82,13 @@ func (c *Client) GenerateContent(ctx context.Context, model string, in GenerateR
 	return out, nil
 }
 
-func (c *Client) StreamGenerateContent(ctx context.Context, model string, in GenerateRequest, onChunk func(GenerateResponse) error) error {
+func (c *Client) StreamGenerateContent(ctx context.Context, model string, in GenerateRequest, opts RequestOptions, onChunk func(GenerateResponse) error) error {
 	body, err := json.Marshal(in)
 	if err != nil {
 		return err
 	}
 	u := c.modelMethodURL(model, "streamGenerateContent")
-	resp, err := c.do(ctx, http.MethodPost, u, body, "streamGenerateContent")
+	resp, err := c.do(ctx, http.MethodPost, u, body, "streamGenerateContent", opts)
 	if err != nil {
 		return err
 	}
@@ -139,7 +139,7 @@ func (c *Client) ListPublisherModels(ctx context.Context) ([]catalog.LiveModel, 
 		if pageToken != "" {
 			u += "&pageToken=" + url.QueryEscape(pageToken)
 		}
-		resp, err := c.doWithToken(ctx, http.MethodGet, u, nil, "listPublisherModels", tok)
+		resp, err := c.doWithToken(ctx, http.MethodGet, u, nil, "listPublisherModels", tok, RequestOptions{})
 		if err != nil {
 			return nil, err
 		}
@@ -184,7 +184,7 @@ func (c *Client) ListPublisherModels(ctx context.Context) ([]catalog.LiveModel, 
 }
 
 func (c *Client) rawJSON(ctx context.Context, method, u string, body []byte, operation string) (json.RawMessage, error) {
-	resp, err := c.do(ctx, method, u, body, operation)
+	resp, err := c.do(ctx, method, u, body, operation, RequestOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -199,15 +199,15 @@ func (c *Client) rawJSON(ctx context.Context, method, u string, body []byte, ope
 	return json.RawMessage(out), nil
 }
 
-func (c *Client) do(ctx context.Context, method, u string, body []byte, operation string) (*http.Response, error) {
+func (c *Client) do(ctx context.Context, method, u string, body []byte, operation string, opts RequestOptions) (*http.Response, error) {
 	tok, err := c.tokens.Token(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return c.doWithToken(ctx, method, u, body, operation, tok)
+	return c.doWithToken(ctx, method, u, body, operation, tok, opts)
 }
 
-func (c *Client) doWithToken(ctx context.Context, method, u string, body []byte, operation, tok string) (*http.Response, error) {
+func (c *Client) doWithToken(ctx context.Context, method, u string, body []byte, operation, tok string, opts RequestOptions) (*http.Response, error) {
 	attempts := c.retry.MaxAttempts
 	if attempts <= 0 {
 		attempts = 1
@@ -224,6 +224,12 @@ func (c *Client) doWithToken(ctx context.Context, method, u string, body []byte,
 		}
 		req.Header.Set("X-Goog-User-Project", c.project)
 		req.Header.Set("User-Agent", "go-llm-gateway/1.0")
+		if opts.LLMRequestType != "" {
+			req.Header.Set("X-Vertex-AI-LLM-Request-Type", opts.LLMRequestType)
+		}
+		if opts.LLMSharedRequestType != "" {
+			req.Header.Set("X-Vertex-AI-LLM-Shared-Request-Type", opts.LLMSharedRequestType)
+		}
 		resp, err := c.http.Do(req)
 		if err == nil && !isRetryableStatus(resp.StatusCode) {
 			return resp, nil
@@ -345,7 +351,7 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 
 func isRetryableStatus(status int) bool {
 	switch status {
-	case http.StatusRequestTimeout, http.StatusTooManyRequests, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+	case http.StatusRequestTimeout, http.StatusInternalServerError, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
 		return true
 	default:
 		return false

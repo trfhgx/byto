@@ -235,6 +235,8 @@ Creates a chat completion using an explicit Gemini model ID.
 | `messages[].role` | string | Yes | `system`, `user`, or `assistant`. |
 | `messages[].content` | string or array | Yes | Text content. Arrays may contain text parts only. |
 | `stream` | boolean | No | When `true`, returns server-sent events. Default `false`. |
+| `service_tier` | string | No | Vertex consumption lane. Defaults to `priority`. Accepted values: `priority`, `standard`, `flex`, `dedicated`. |
+| `reasoning_effort` | string | No | OpenAI-style reasoning control. Accepted values: `off`, `low`, `medium`, `high`. Mapped through the model catalog to Vertex `thinkingConfig.thinkingBudget`. |
 | `temperature` | number | No | Passed to Vertex `generationConfig.temperature`. |
 | `top_p` | number | No | Passed to Vertex `generationConfig.topP`. |
 | `max_tokens` | integer | No | Passed to Vertex `generationConfig.maxOutputTokens`. |
@@ -243,10 +245,26 @@ Creates a chat completion using an explicit Gemini model ID.
 | `stop` | string or array | No | Passed to Vertex `generationConfig.stopSequences`. Empty strings are ignored. |
 | `seed` | integer | No | Passed to Vertex `generationConfig.seed`. |
 | `extra_body.google.cached_content` | string | No | Vertex cached content resource name. |
+| `extra_body.google.reasoning_effort` | string | No | Google-scoped alias for `reasoning_effort`. Conflicts with a different top-level value are rejected. |
+| `extra_body.google.thinking_budget` | integer | No | Explicit Vertex `thinkingConfig.thinkingBudget`. Overrides named reasoning-budget mapping. |
+| `extra_body.google.include_thoughts` | boolean | No | Explicit Vertex `thinkingConfig.includeThoughts`. Off by default. |
 
-Vertex `generationConfig` also documents fields such as `topK`, `candidateCount`, `responseMimeType`, `responseSchema`, `responseLogprobs`, `logprobs`, `audioTimestamp`, and `thinkingConfig`. This gateway only accepts the fields listed above in the OpenAI-compatible request body right now. Add new mappings deliberately because some Vertex fields need response-shape work (`candidateCount` / OpenAI `n`) or model-specific behavior (`thinkingConfig`, JSON schema).
+Vertex `generationConfig` also documents fields such as `topK`, `candidateCount`, `responseMimeType`, `responseSchema`, `responseLogprobs`, `logprobs`, and `audioTimestamp`. This gateway only accepts the fields listed above in the OpenAI-compatible request body right now. Add new mappings deliberately because some Vertex fields need response-shape work (`candidateCount` / OpenAI `n`) or model-specific behavior (JSON schema).
 
 For Gemini 3 models, Google documents that sampling parameters (`temperature`, `topP`, and `topK`) are deprecated and recommends omitting them so the model controls sampling automatically.
+
+`service_tier` maps to Vertex request headers:
+
+| `service_tier` | Vertex headers | Behavior |
+| --- | --- | --- |
+| omitted, `auto`, `high`, `priority` | `X-Vertex-AI-LLM-Request-Type: shared`, `X-Vertex-AI-LLM-Shared-Request-Type: priority` | Priority PayGo. Google can still downgrade to Standard PayGo under ramp/capacity pressure. |
+| `standard`, `default`, `on_demand` | `X-Vertex-AI-LLM-Request-Type: shared` | Standard PayGo. |
+| `flex` | `X-Vertex-AI-LLM-Request-Type: shared`, `X-Vertex-AI-LLM-Shared-Request-Type: flex` | Flex PayGo for latency-tolerant work. |
+| `dedicated`, `provisioned`, `provisioned_throughput` | `X-Vertex-AI-LLM-Request-Type: dedicated` | Provisioned Throughput only. |
+
+The response includes `usage.traffic_type` when Vertex returns it. Use this value to verify what actually happened (`ON_DEMAND_PRIORITY`, `ON_DEMAND`, `ON_DEMAND_FLEX`, or `PROVISIONED_THROUGHPUT`).
+
+`reasoning_effort` remains named at the API boundary. Per-model numeric budgets live in `MODEL_CATALOG_PATH` under `capabilities.reasoning_budgets`. This lets one model map `high` differently from another while callers keep using `off`, `low`, `medium`, and `high`. Vertex returns thinking token usage as `usageMetadata.thoughtsTokenCount`; the gateway maps that to `usage.completion_tokens_details.reasoning_tokens`.
 
 ### Message Content
 
@@ -285,6 +303,7 @@ curl -s http://localhost:8080/v1/chat/completions \
       { "role": "system", "content": "You are concise." },
       { "role": "user", "content": "Reply with only: ok" }
     ],
+    "reasoning_effort": "low",
     "temperature": 0.2,
     "frequency_penalty": 0.1,
     "presence_penalty": 0.1,
@@ -316,7 +335,11 @@ curl -s http://localhost:8080/v1/chat/completions \
     "prompt_tokens": 5,
     "completion_tokens": 1,
     "total_tokens": 28,
-    "cached_tokens": 0
+    "cached_tokens": 0,
+    "completion_tokens_details": {
+      "reasoning_tokens": 12
+    },
+    "traffic_type": "ON_DEMAND_PRIORITY"
   }
 }
 ```
@@ -402,6 +425,7 @@ Errors use this shape:
 | `400` | `invalid_model` | Model is not enabled, available, aliased, or allowed. |
 | `401` | `invalid_api_key` | Missing or invalid bearer token. |
 | `405` | `method_not_allowed` | Unsupported method for endpoint. |
+| `429` | `vertex_error` | Vertex returned resource exhaustion/capacity contention. The gateway preserves this status so callers can back off or use a higher-priority Vertex consumption mode. |
 | `500` | `server_error` | Server cannot stream the response. |
 | `502` | `vertex_error` | Vertex returned an error or could not be reached. |
 
@@ -413,7 +437,6 @@ Retried by default:
 
 - network/request errors before a response is returned
 - `408`
-- `429`
 - `500`
 - `502`
 - `503`
@@ -423,6 +446,7 @@ Not retried:
 
 - `400` invalid request/model/parameters
 - `401` or `403` auth and permission errors
+- `429` resource exhaustion/capacity contention
 - model safety/content responses returned as successful Vertex responses
 - response parsing errors after a streaming response has already started
 

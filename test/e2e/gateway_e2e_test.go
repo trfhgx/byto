@@ -31,6 +31,12 @@ func TestGatewayAgainstFakeVertex(t *testing.T) {
 		if r.Header.Get("X-Goog-User-Project") != "test-project" {
 			t.Fatalf("missing quota project header")
 		}
+		if r.Header.Get("X-Vertex-AI-LLM-Request-Type") != "shared" {
+			t.Fatalf("missing priority request type header")
+		}
+		if r.Header.Get("X-Vertex-AI-LLM-Shared-Request-Type") != "priority" {
+			t.Fatalf("missing priority shared request type header")
+		}
 		var req gemini.GenerateRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Fatal(err)
@@ -38,7 +44,7 @@ func TestGatewayAgainstFakeVertex(t *testing.T) {
 		if len(req.Contents) != 1 {
 			t.Fatalf("expected one content")
 		}
-		_ = json.NewEncoder(w).Encode(gemini.GenerateResponse{Candidates: []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "fake vertex response"}}}, FinishReason: "STOP"}}, UsageMetadata: gemini.UsageMetadata{PromptTokenCount: 10, CandidatesTokenCount: 3, TotalTokenCount: 13, CachedContentTokenCount: 5}})
+		_ = json.NewEncoder(w).Encode(gemini.GenerateResponse{Candidates: []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "fake vertex response"}}}, FinishReason: "STOP"}}, UsageMetadata: gemini.UsageMetadata{PromptTokenCount: 10, CandidatesTokenCount: 3, TotalTokenCount: 13, CachedContentTokenCount: 5, TrafficType: "ON_DEMAND_PRIORITY"}})
 	}))
 	defer fakeVertex.Close()
 
@@ -68,5 +74,9 @@ func TestGatewayAgainstFakeVertex(t *testing.T) {
 	}
 	if fmt.Sprint(out["model"]) != "gemini-3.1-pro-preview" {
 		t.Fatalf("wrong model: %#v", out["model"])
+	}
+	usage, ok := out["usage"].(map[string]any)
+	if !ok || fmt.Sprint(usage["traffic_type"]) != "ON_DEMAND_PRIORITY" {
+		t.Fatalf("wrong traffic type: %#v", out["usage"])
 	}
 }
