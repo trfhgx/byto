@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -27,6 +28,9 @@ func liveConfig(t *testing.T) config.Config {
 	if cfg.ModelCatalogPath != "" && !filepath.IsAbs(cfg.ModelCatalogPath) {
 		root := repoRoot(t)
 		cfg.ModelCatalogPath = filepath.Join(root, cfg.ModelCatalogPath)
+	}
+	if p := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); p != "" && !filepath.IsAbs(p) {
+		os.Setenv("GOOGLE_APPLICATION_CREDENTIALS", filepath.Join(repoRoot(t), p))
 	}
 	return cfg
 }
@@ -131,5 +135,66 @@ func TestLiveVertexGenerateExplicitModel(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status %d", resp.StatusCode)
+	}
+}
+
+func TestLiveVertexConfiguredCatalogModels(t *testing.T) {
+	if os.Getenv("RUN_LIVE_VERTEX_TESTS") != "1" {
+		t.Skip("set RUN_LIVE_VERTEX_TESTS=1")
+	}
+	if os.Getenv("RUN_LIVE_VERTEX_CATALOG_TESTS") != "1" {
+		t.Skip("set RUN_LIVE_VERTEX_CATALOG_TESTS=1")
+	}
+	cfg := liveConfig(t)
+	cfg.ModelCatalogRefreshOnStart = false
+	s, err := server.NewFromConfig(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts := httptest.NewServer(s.Routes())
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/models", nil)
+	req.Header.Set("Authorization", "Bearer "+cfg.GatewayAPIKeys[0])
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("models status %d body %s", resp.StatusCode, string(body))
+	}
+	var models struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&models); err != nil {
+		t.Fatal(err)
+	}
+	if len(models.Data) == 0 {
+		t.Fatal("catalog has no enabled available models")
+	}
+
+	for _, model := range models.Data {
+		t.Run(model.ID, func(t *testing.T) {
+			payload := map[string]any{"model": model.ID, "messages": []map[string]string{{"role": "user", "content": "Reply with only: ok"}}}
+			b, _ := json.Marshal(payload)
+			req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/chat/completions", bytes.NewReader(b))
+			req.Header.Set("Authorization", "Bearer "+cfg.GatewayAPIKeys[0])
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status %d body %s", resp.StatusCode, string(body))
+			}
+			if !bytes.Contains(body, []byte(`"choices"`)) {
+				t.Fatalf("missing choices body %s", string(body))
+			}
+		})
 	}
 }
