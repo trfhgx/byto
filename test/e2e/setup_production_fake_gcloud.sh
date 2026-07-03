@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 TMP_ROOT="$(mktemp -d)"
 WORK_DIR="$TMP_ROOT/work"
-INSTALL_PREFIX="$TMP_ROOT/google-cloud-sdk"
+INSTALL_PREFIX=".cache/fake-google-cloud-sdk"
 INSTALL_LOG="$TMP_ROOT/gcloud-install.log"
 GCLOUD_LOG="$TMP_ROOT/gcloud.log"
 
