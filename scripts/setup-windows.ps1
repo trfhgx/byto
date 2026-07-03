@@ -220,12 +220,13 @@ function Test-GoVersion {
   if (-not $go) {
     return $false
   }
-  $versionText = (& go version)
-  if ($versionText -notmatch "go(\d+)\.(\d+)") {
+  $versionText = (& go version 2>&1) -join "`n"
+  $match = [regex]::Match($versionText, "go(\d+)\.(\d+)")
+  if (-not $match.Success) {
     return $false
   }
-  $major = [int]$Matches[1]
-  $minor = [int]$Matches[2]
+  $major = [int]$match.Groups[1].Value
+  $minor = [int]$match.Groups[2].Value
   return ($major -gt 1 -or ($major -eq 1 -and $minor -ge 22))
 }
 

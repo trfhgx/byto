@@ -68,6 +68,7 @@ jobs:
           $fakeBin = Join-Path $env:RUNNER_TEMP "byto-fake-bin"
           New-Item -ItemType Directory -Force -Path $fakeBin | Out-Null
           $goPath = (Get-Command go).Source
+          $goRoot = (& go env GOROOT)
           $gcloudPath = Join-Path $fakeBin "gcloud.cmd"
 
           @"
@@ -81,7 +82,12 @@ jobs:
           echo fake winget %*>>"%RUNNER_TEMP%\byto-winget.log"
           echo %* | findstr /C:"GoLang.Go" >nul
           if not errorlevel 1 (
-            copy /Y "$goPath" "$fakeBin\go.exe" >nul
+            (
+              echo @echo off
+              echo set "GOROOT=$goRoot"
+              echo "$goPath" %%*
+              echo exit /b %%ERRORLEVEL%%
+            ) > "$fakeBin\go.cmd"
             exit /b 0
           )
           echo %* | findstr /C:"Google.CloudSDK" >nul
