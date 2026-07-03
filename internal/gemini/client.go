@@ -417,30 +417,64 @@ func supportedActionKeys(actions map[string]any) []string {
 }
 
 func parseStream(r io.Reader, onChunk func(GenerateResponse) error) error {
-	scanner := bufio.NewScanner(r)
-	buf := make([]byte, 0, 1024*1024)
-	scanner.Buffer(buf, 10*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || line == "[" || line == "]" {
+	br := bufio.NewReader(r)
+
+	// Skip leading whitespace/newlines
+	for {
+		b, err := br.Peek(1)
+		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
+			return err
+		}
+		if b[0] == ' ' || b[0] == '\t' || b[0] == '\r' || b[0] == '\n' {
+			_, _ = br.ReadByte()
 			continue
 		}
-		line = strings.TrimSuffix(line, ",")
-		if !strings.HasPrefix(line, "{") {
-			continue
+		break
+	}
+
+	b, err := br.Peek(1)
+	if err != nil {
+		return err
+	}
+
+	dec := json.NewDecoder(br)
+	if b[0] == '[' {
+		t, err := dec.Token()
+		if err != nil {
+			return err
 		}
+		if delim, ok := t.(json.Delim); !ok || delim != '[' {
+			return fmt.Errorf("expected [ delimiter, got %v", t)
+		}
+		for dec.More() {
+			var gr GenerateResponse
+			if err := dec.Decode(&gr); err != nil {
+				return err
+			}
+			if err := onChunk(gr); err != nil {
+				return err
+			}
+		}
+		// Read closing ']'
+		_, _ = dec.Token()
+		return nil
+	}
+
+	for {
 		var gr GenerateResponse
-		if err := json.Unmarshal([]byte(line), &gr); err != nil {
-			continue
+		if err := dec.Decode(&gr); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return err
 		}
 		if err := onChunk(gr); err != nil {
 			return err
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	// Some proxies buffer the JSON array without newlines. Handle that case with a best-effort decoder.
 	return nil
 }
 
