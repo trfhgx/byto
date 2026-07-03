@@ -21,6 +21,7 @@ type Model struct {
 	DisplayName      string       `json:"display_name,omitempty"`
 	Publisher        string       `json:"publisher,omitempty"`
 	Family           string       `json:"family,omitempty"`
+	Runtime          string       `json:"runtime,omitempty"`
 	Enabled          bool         `json:"enabled"`
 	Available        bool         `json:"available"`
 	LaunchStage      string       `json:"launch_stage,omitempty"`
@@ -62,6 +63,66 @@ func SupportedGoogleGeminiModels() []LiveModel {
 		{ID: "gemini-3.1-flash-lite", DisplayName: "Gemini 3.1 Flash-Lite", Publisher: "google", LaunchStage: "GA"},
 		{ID: "gemini-3.1-pro-preview", DisplayName: "Gemini 3.1 Pro Preview", Publisher: "google", LaunchStage: "PUBLIC_PREVIEW"},
 		{ID: "gemini-3.5-flash", DisplayName: "Gemini 3.5 Flash", Publisher: "google", LaunchStage: "GA"},
+	}
+}
+
+func SupportedVertexOpenAIModels() []Model {
+	now := time.Now().UTC()
+	models := []Model{
+		vertexOpenAIModel("xai/grok-4.20-reasoning", "Grok 4.20 Reasoning", "xai", "grok", []string{"reasoning"}),
+		vertexOpenAIModel("xai/grok-4.20-non-reasoning", "Grok 4.20 Non-Reasoning", "xai", "grok", nil),
+		vertexOpenAIModel("xai/grok-4.1-fast-reasoning", "Grok 4.1 Fast Reasoning", "xai", "grok", []string{"reasoning"}),
+		vertexOpenAIModel("xai/grok-4.1-fast-non-reasoning", "Grok 4.1 Fast Non-Reasoning", "xai", "grok", nil),
+		vertexOpenAIModel("qwen/qwen3-next-80b-a3b-instruct-maas", "Qwen3 Next 80B A3B Instruct MaaS", "qwen", "qwen", nil),
+		vertexOpenAIModel("qwen/qwen3-next-80b-a3b-thinking-maas", "Qwen3 Next 80B A3B Thinking MaaS", "qwen", "qwen", []string{"thinking"}),
+		vertexOpenAIModel("qwen/qwen3-coder-480b-a35b-instruct-maas", "Qwen3 Coder 480B A35B Instruct MaaS", "qwen", "qwen", nil),
+		vertexOpenAIModel("qwen/qwen3-235b-a22b-instruct-2507-maas", "Qwen3 235B A22B Instruct MaaS", "qwen", "qwen", nil),
+		vertexOpenAIModel("openai/gpt-oss-120b-maas", "GPT-OSS 120B MaaS", "openai", "gpt-oss", nil),
+		vertexOpenAIModel("openai/gpt-oss-20b-maas", "GPT-OSS 20B MaaS", "openai", "gpt-oss", nil),
+		vertexOpenAIModel("moonshotai/kimi-k2-thinking-maas", "Kimi K2 Thinking MaaS", "moonshotai", "kimi", []string{"thinking"}),
+		vertexOpenAIModel("zai-org/glm-5-maas", "GLM 5 MaaS", "zai-org", "glm", nil),
+		vertexOpenAIModel("zai-org/glm-4.7-maas", "GLM 4.7 MaaS", "zai-org", "glm", nil),
+		vertexOpenAIModel("google/gemma-4-26b-a4b-it-maas", "Gemma 4 26B A4B IT MaaS", "google", "gemma", nil),
+		vertexOpenAIModel("minimaxai/minimax-m2-maas", "MiniMax M2 MaaS", "minimaxai", "minimax", nil),
+	}
+	for i := range models {
+		models[i].LastSeenAt = &now
+	}
+	return models
+}
+
+func IsSupportedVertexOpenAIModel(id string) bool {
+	id = strings.TrimSpace(id)
+	for _, model := range SupportedVertexOpenAIModels() {
+		if model.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func vertexOpenAIModel(id, displayName, publisher, family string, reasoning []string) Model {
+	caps := Capabilities{
+		Input:                []string{"text"},
+		Output:               []string{"text"},
+		Streaming:            true,
+		GenerationParameters: []string{"max_tokens", "temperature", "top_p", "stop", "frequency_penalty", "presence_penalty", "seed"},
+	}
+	if len(reasoning) > 0 {
+		caps.ReasoningEffort = []string{"low", "medium", "high"}
+	}
+	return Model{
+		ID:               id,
+		DisplayName:      displayName,
+		Publisher:        publisher,
+		Family:           family,
+		Runtime:          "vertex_openai",
+		Enabled:          true,
+		Available:        true,
+		LaunchStage:      "GA",
+		SupportedActions: []string{"chat.completions", "chat.completions.stream"},
+		Capabilities:     caps,
+		Notes:            "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
 	}
 }
 
@@ -121,6 +182,9 @@ func (c *Catalog) MergeSupported(models []LiveModel) {
 	index := map[string]int{}
 	for i := range c.Models {
 		index[c.Models[i].ID] = i
+		if c.Models[i].Runtime == "vertex_openai" {
+			continue
+		}
 		if _, ok := seen[c.Models[i].ID]; !ok {
 			c.Models[i].Available = false
 		}

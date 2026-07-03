@@ -404,7 +404,9 @@ Resolution order:
 4. If `ALLOW_ANY_GEMINI_MODEL=true`, accept any `gemini-*` model ID.
 5. Reject the request.
 
-When startup catalog refresh is enabled, Byto updates `MODEL_CATALOG_PATH` against the current supported Google Gemini endpoint model list, then verifies each supported candidate with Vertex `countTokens`. Passing candidates become enabled and available for the configured project/location. Hard failures such as `404`, `403`, `401`, and `400` disable the entry. Transient failures such as `429`, `5xx`, or timeout keep the previous state.
+Gemini catalog entries use Vertex `generateContent`. Catalog entries with `runtime: "vertex_openai"` use the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint and are limited to the non-Gemini MaaS IDs that were live-proven for this project/workstream.
+
+When startup catalog refresh is enabled, Byto updates only Gemini candidates in `MODEL_CATALOG_PATH` against the current supported Google Gemini endpoint model list, then verifies each supported Gemini candidate with Vertex `countTokens`. Passing candidates become enabled and available for the configured project/location. Hard failures such as `404`, `403`, `401`, and `400` disable the entry. Transient failures such as `429`, `5xx`, or timeout keep the previous state. MaaS entries are not verified with Gemini `countTokens`, and Byto does not accept Marketplace terms or make project/billing changes from code.
 
 ## Errors
 
@@ -425,6 +427,7 @@ Errors use this shape:
 | `400` | `invalid_request_error` | Invalid JSON, missing `model`, missing `messages`, unsupported role/content. |
 | `400` | `invalid_model` | Model is not enabled, available, aliased, or allowed. |
 | `401` | `invalid_api_key` | Missing or invalid bearer token. |
+| `401` or `403` | `provider_access_error` | Vertex rejected access to a MaaS provider/model for the configured Google Cloud account. |
 | `405` | `method_not_allowed` | Unsupported method for endpoint. |
 | `429` | `vertex_error` | Vertex returned resource exhaustion/capacity contention. The gateway preserves this status so callers can back off or use a higher-priority Vertex consumption mode. |
 | `500` | `server_error` | Server cannot stream the response. |
@@ -486,3 +489,5 @@ These Vertex-specific `generationConfig` fields are not mapped yet:
 
 - [Vertex/Gemini generateContent REST reference](https://docs.cloud.google.com/gemini-enterprise-agent-platform/reference/rest/v1/projects.locations.publishers.models/generateContent)
 - [Vertex AI Gemini inference examples and generationConfig shape](https://cloud.google.com/vertex-ai/generative-ai/docs/model-reference/inference)
+- [Vertex AI OpenAI-compatible chat completions endpoint](https://cloud.google.com/vertex-ai/generative-ai/docs/start/openai)
+- [Gemini Enterprise Agent Platform MaaS open model API guide](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/maas/call-open-model-apis)

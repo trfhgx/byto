@@ -23,6 +23,7 @@ import (
 	"github.com/example/go-llm-gateway/internal/gemini"
 	gwlog "github.com/example/go-llm-gateway/internal/logging"
 	"github.com/example/go-llm-gateway/internal/openai"
+	"github.com/example/go-llm-gateway/internal/vertexopenai"
 )
 
 type GeminiClient interface {
@@ -35,10 +36,16 @@ type GeminiClient interface {
 	DeleteCachedContent(ctx context.Context, id string) (json.RawMessage, error)
 }
 
+type VertexOpenAIClient interface {
+	ChatCompletions(ctx context.Context, req openai.ChatCompletionRequest, opts gemini.RequestOptions) (openai.ChatCompletionResponse, error)
+	StreamChatCompletions(ctx context.Context, req openai.ChatCompletionRequest, opts gemini.RequestOptions, onChunk func(openai.StreamChunk) error) error
+}
+
 type Server struct {
 	cfg          config.Config
 	resolver     *config.ModelResolver
 	gemini       GeminiClient
+	vertexOpenAI VertexOpenAIClient
 	logger       *gwlog.JSONLLogger
 	apiKeys      map[string]struct{}
 	catalogMu    sync.RWMutex
@@ -50,12 +57,18 @@ func New(cfg config.Config, gem GeminiClient, logger *gwlog.JSONLLogger) *Server
 	for _, k := range cfg.GatewayAPIKeys {
 		keys[k] = struct{}{}
 	}
-	s := &Server{cfg: cfg, resolver: config.NewModelResolver(cfg), gemini: gem, logger: logger, apiKeys: keys, modelCatalog: map[string]catalog.Model{}}
+	s := &Server{cfg: cfg, resolver: config.NewModelResolver(cfg), gemini: gem, vertexOpenAI: vertexopenai.NewClient(cfg, auth.NewDefaultTokenProvider()), logger: logger, apiKeys: keys, modelCatalog: map[string]catalog.Model{}}
 	if cfg.ModelCatalogPath != "" {
 		if c, err := catalog.Load(cfg.ModelCatalogPath); err == nil {
 			s.setModelCatalog(c)
 		}
 	}
+	return s
+}
+
+func NewWithVertexOpenAI(cfg config.Config, gem GeminiClient, vertexClient VertexOpenAIClient, logger *gwlog.JSONLLogger) *Server {
+	s := New(cfg, gem, logger)
+	s.vertexOpenAI = vertexClient
 	return s
 }
 
@@ -74,7 +87,8 @@ func NewFromConfig(cfg config.Config) (*Server, error) {
 		return nil, err
 	}
 	gem := gemini.NewClient(cfg, auth.NewDefaultTokenProvider())
-	s := New(cfg, gem, logger)
+	vertexClient := vertexopenai.NewClient(cfg, auth.NewDefaultTokenProvider())
+	s := NewWithVertexOpenAI(cfg, gem, vertexClient, logger)
 	if cfg.ModelCatalogRefreshOnStart && cfg.ModelCatalogPath != "" {
 		go s.refreshModelCatalog(cfg.ModelCatalogPath)
 	}
@@ -210,7 +224,12 @@ func (s *Server) model(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/v1/models/"))
-	if id == "" || strings.Contains(id, "/") {
+	id, err := url.PathUnescape(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "model not found", "not_found")
+		return
+	}
+	if id == "" {
 		writeError(w, http.StatusNotFound, "model not found", "not_found")
 		return
 	}
@@ -325,6 +344,44 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	logEntry.ServiceTier = serviceTier
 
+	if s.usesVertexOpenAI(model) {
+		req.Model = model
+		reasoningEffort, err := requestedReasoningEffort(req)
+		if err != nil {
+			logEntry.Status = http.StatusBadRequest
+			logEntry.Error = err.Error()
+			writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+			return
+		}
+		if reasoningEffort != "" {
+			req.ReasoningEffort = reasoningEffort
+			logEntry.ReasoningEffort = reasoningEffort
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout())
+		defer cancel()
+		if req.Stream {
+			s.streamVertexOpenAI(ctx, w, req, requestOpts, &logEntry, start)
+			return
+		}
+		resp, err := s.vertexOpenAI.ChatCompletions(ctx, req, requestOpts)
+		logEntry.LatencyMS = time.Since(start).Milliseconds()
+		if err != nil {
+			logEntry.Status = providerGatewayStatus(err)
+			logEntry.Error = err.Error()
+			setUpstreamLog(&logEntry, err)
+			writeProviderError(w, logEntry.Status, err)
+			return
+		}
+		logEntry.Status = http.StatusOK
+		logEntry.PromptTokens = resp.Usage.PromptTokens
+		logEntry.CompletionTokens = resp.Usage.CompletionTokens
+		logEntry.TotalTokens = resp.Usage.TotalTokens
+		logEntry.CachedTokens = resp.Usage.CachedTokens
+		logEntry.TrafficType = resp.Usage.TrafficType
+		writeJSON(w, http.StatusOK, resp)
+		return
+	}
+
 	greq, err := gemini.FromOpenAI(req)
 	if err != nil {
 		logEntry.Status = http.StatusBadRequest
@@ -373,6 +430,43 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		Usage:   openai.Usage{PromptTokens: logEntry.PromptTokens, CompletionTokens: logEntry.CompletionTokens, TotalTokens: logEntry.TotalTokens, CachedTokens: logEntry.CachedTokens, CompletionTokensDetails: completionDetails, TrafficType: logEntry.TrafficType},
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) streamVertexOpenAI(ctx context.Context, w http.ResponseWriter, req openai.ChatCompletionRequest, opts gemini.RequestOptions, logEntry *gwlog.RequestLog, start time.Time) {
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		logEntry.Status = http.StatusInternalServerError
+		writeError(w, http.StatusInternalServerError, "streaming unsupported", "server_error")
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.WriteHeader(http.StatusOK)
+	logEntry.Status = http.StatusOK
+	err := s.vertexOpenAI.StreamChatCompletions(ctx, req, opts, func(chunk openai.StreamChunk) error {
+		if chunk.Usage != nil {
+			logEntry.PromptTokens += chunk.Usage.PromptTokens
+			logEntry.CompletionTokens += chunk.Usage.CompletionTokens
+			logEntry.TotalTokens += chunk.Usage.TotalTokens
+			logEntry.CachedTokens += chunk.Usage.CachedTokens
+			if chunk.Usage.TrafficType != "" {
+				logEntry.TrafficType = chunk.Usage.TrafficType
+			}
+		}
+		sendSSE(w, chunk)
+		flusher.Flush()
+		return nil
+	})
+	logEntry.LatencyMS = time.Since(start).Milliseconds()
+	if err != nil {
+		logEntry.Error = err.Error()
+		setUpstreamLog(logEntry, err)
+		log.Printf("vertex openai stream error request_id=%s err=%v", logEntry.RequestID, err)
+		return
+	}
+	fmt.Fprint(w, "data: [DONE]\n\n")
+	flusher.Flush()
 }
 
 func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID string, greq gemini.GenerateRequest, opts gemini.RequestOptions, logEntry *gwlog.RequestLog, start time.Time) {
@@ -458,6 +552,28 @@ func vertexGatewayStatus(err error) int {
 	return http.StatusBadGateway
 }
 
+func providerGatewayStatus(err error) int {
+	if ve, ok := err.(*gemini.VertexError); ok {
+		switch ve.Status {
+		case http.StatusTooManyRequests:
+			return http.StatusTooManyRequests
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return ve.Status
+		default:
+			return http.StatusBadGateway
+		}
+	}
+	return http.StatusBadGateway
+}
+
+func writeProviderError(w http.ResponseWriter, status int, err error) {
+	typ := "vertex_error"
+	if ve, ok := err.(*gemini.VertexError); ok && (ve.Status == http.StatusUnauthorized || ve.Status == http.StatusForbidden) {
+		typ = "provider_access_error"
+	}
+	writeError(w, status, err.Error(), typ)
+}
+
 func classifyUpstreamStatus(status int) string {
 	switch {
 	case status == http.StatusTooManyRequests:
@@ -493,8 +609,12 @@ func (s *Server) modelInfo(id string) openai.ModelInfo {
 	if !ok {
 		return info
 	}
+	if strings.TrimSpace(m.Publisher) != "" {
+		info.OwnedBy = m.Publisher
+	}
 	info.DisplayName = m.DisplayName
 	info.Family = m.Family
+	info.Runtime = m.Runtime
 	info.Enabled = boolPtr(m.Enabled)
 	info.Available = boolPtr(m.Available)
 	info.LaunchStage = m.LaunchStage
@@ -525,6 +645,16 @@ func (s *Server) modelInfo(id string) openai.ModelInfo {
 		info.LastSeenAt = m.LastSeenAt.Format(time.RFC3339)
 	}
 	return info
+}
+
+func (s *Server) usesVertexOpenAI(model string) bool {
+	s.catalogMu.RLock()
+	m, ok := s.modelCatalog[model]
+	s.catalogMu.RUnlock()
+	if ok {
+		return m.Runtime == "vertex_openai"
+	}
+	return catalog.IsSupportedVertexOpenAIModel(model)
 }
 
 func hasCapabilities(c openai.ModelCapabilities) bool {

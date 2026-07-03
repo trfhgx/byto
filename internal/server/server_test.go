@@ -31,12 +31,34 @@ type fakeReasoningGemini struct {
 	wantInclude     *bool
 	wantTrafficType string
 }
+type failChatGemini struct {
+	fakeGemini
+	t *testing.T
+}
+type fakeVertexOpenAI struct {
+	t          *testing.T
+	called     bool
+	wantModel  string
+	gotReq     openai.ChatCompletionRequest
+	gotOpts    gemini.RequestOptions
+	err        error
+	streamErr  error
+	streamUsed bool
+}
 
 func (f fakeGemini) GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error) {
 	return gemini.GenerateResponse{Candidates: []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "ok"}}}, FinishReason: "STOP"}}, UsageMetadata: gemini.UsageMetadata{PromptTokenCount: 3, CandidatesTokenCount: 2, TotalTokenCount: 5, CachedContentTokenCount: 1, TrafficType: "ON_DEMAND_PRIORITY"}}, nil
 }
 func (f fakeResourceExhaustedGemini) GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error) {
 	return gemini.GenerateResponse{}, &gemini.VertexError{Operation: "generateContent", Status: http.StatusTooManyRequests, Body: `{"error":{"status":"RESOURCE_EXHAUSTED"}}`}
+}
+func (f failChatGemini) GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error) {
+	f.t.Fatalf("Gemini GenerateContent should not be called for %s", model)
+	return gemini.GenerateResponse{}, nil
+}
+func (f failChatGemini) StreamGenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions, onChunk func(gemini.GenerateResponse) error) error {
+	f.t.Fatalf("Gemini StreamGenerateContent should not be called for %s", model)
+	return nil
 }
 func (f fakeReasoningGemini) GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error) {
 	if in.GenerationConfig == nil || in.GenerationConfig.ThinkingConfig == nil || in.GenerationConfig.ThinkingConfig.ThinkingBudget == nil {
@@ -79,6 +101,32 @@ func (f fakeGemini) GetCachedContent(ctx context.Context, id string) (json.RawMe
 }
 func (f fakeGemini) DeleteCachedContent(ctx context.Context, id string) (json.RawMessage, error) {
 	return json.RawMessage(`{}`), nil
+}
+func (f *fakeVertexOpenAI) ChatCompletions(ctx context.Context, req openai.ChatCompletionRequest, opts gemini.RequestOptions) (openai.ChatCompletionResponse, error) {
+	f.called = true
+	f.gotReq = req
+	f.gotOpts = opts
+	if f.wantModel != "" && req.Model != f.wantModel {
+		f.t.Fatalf("model %q, want %q", req.Model, f.wantModel)
+	}
+	if f.err != nil {
+		return openai.ChatCompletionResponse{}, f.err
+	}
+	return openai.ChatCompletionResponse{
+		ID:      "chatcmpl-test",
+		Object:  "chat.completion",
+		Created: time.Now().Unix(),
+		Model:   req.Model,
+		Choices: []openai.Choice{{Index: 0, Message: openai.ResponseMessage{Role: "assistant", Content: "OK"}, FinishReason: "stop"}},
+		Usage:   openai.Usage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2},
+	}, nil
+}
+func (f *fakeVertexOpenAI) StreamChatCompletions(ctx context.Context, req openai.ChatCompletionRequest, opts gemini.RequestOptions, onChunk func(openai.StreamChunk) error) error {
+	f.streamUsed = true
+	if f.streamErr != nil {
+		return f.streamErr
+	}
+	return onChunk(openai.StreamChunk{ID: "chatcmpl-test", Object: "chat.completion.chunk", Created: time.Now().Unix(), Model: req.Model, Choices: []openai.StreamChoice{{Index: 0, Delta: openai.StreamDelta{Content: "OK"}}}})
 }
 
 func testServer(t *testing.T) *Server {
@@ -127,6 +175,71 @@ func TestChatCompletionRequiresModel(t *testing.T) {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "model is required") {
+		t.Fatalf("body %s", w.Body.String())
+	}
+}
+
+func TestChatCompletionRoutesVertexOpenAIModel(t *testing.T) {
+	path := t.TempDir() + "/requests.jsonl"
+	logger := testLogger(t, path)
+	cfg := config.Config{
+		Project:               "p",
+		Location:              "global",
+		AllowedModels:         []string{"xai/grok-4.20-reasoning"},
+		ModelAliases:          map[string]string{},
+		GatewayAPIKeys:        []string{"k"},
+		VertexBaseURL:         "http://vertex",
+		LogPath:               path,
+		RequestTimeoutSeconds: 5,
+	}
+	vertex := &fakeVertexOpenAI{t: t, wantModel: "xai/grok-4.20-reasoning"}
+	s := NewWithVertexOpenAI(cfg, failChatGemini{t: t}, vertex, logger)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"xai/grok-4.20-reasoning","messages":[{"role":"user","content":"hi"}],"max_tokens":2}`))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if !vertex.called {
+		t.Fatal("vertex openai client was not called")
+	}
+	if vertex.gotReq.MaxTokens == nil || *vertex.gotReq.MaxTokens != 2 {
+		t.Fatalf("max_tokens not forwarded: %#v", vertex.gotReq.MaxTokens)
+	}
+	if vertex.gotOpts.LLMSharedRequestType != "priority" {
+		t.Fatalf("default service tier opts = %#v", vertex.gotOpts)
+	}
+	if !strings.Contains(w.Body.String(), `"content":"OK"`) {
+		t.Fatalf("body %s", w.Body.String())
+	}
+}
+
+func TestChatCompletionVertexOpenAIProviderAccessError(t *testing.T) {
+	path := t.TempDir() + "/requests.jsonl"
+	logger := testLogger(t, path)
+	cfg := config.Config{
+		Project:               "p",
+		Location:              "global",
+		AllowedModels:         []string{"openai/gpt-oss-20b-maas"},
+		ModelAliases:          map[string]string{},
+		GatewayAPIKeys:        []string{"k"},
+		VertexBaseURL:         "http://vertex",
+		LogPath:               path,
+		RequestTimeoutSeconds: 5,
+	}
+	vertex := &fakeVertexOpenAI{t: t, err: &gemini.VertexError{Operation: "openai.chatCompletions", Status: http.StatusForbidden, Body: `{"error":{"message":"model access denied"}}`}}
+	s := NewWithVertexOpenAI(cfg, failChatGemini{t: t}, vertex, logger)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"openai/gpt-oss-20b-maas","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"type":"provider_access_error"`) {
 		t.Fatalf("body %s", w.Body.String())
 	}
 }
