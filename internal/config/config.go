@@ -30,6 +30,7 @@ type Config struct {
 }
 
 func Load() (Config, error) {
+	loadDotEnv(".env")
 	cfg := defaults()
 	if p := os.Getenv("CONFIG_FILE"); p != "" {
 		b, err := os.ReadFile(p)
@@ -45,6 +46,31 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func loadDotEnv(path string) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			continue
+		}
+		key = strings.TrimPrefix(strings.TrimSpace(key), "\ufeff")
+		if key == "" {
+			continue
+		}
+		if current, exists := os.LookupEnv(key); exists && current != "" {
+			continue
+		}
+		os.Setenv(key, strings.Trim(strings.TrimSpace(value), `"'`))
+	}
 }
 
 func defaults() Config {

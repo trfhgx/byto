@@ -37,6 +37,7 @@ Prerequisites:
 - Google Cloud CLI (`gcloud`). Interactive setup can install it for you when it is missing.
 - Docker. Optional, only needed for the Docker path.
 - `make`. Optional; macOS/Linux often have it or can install it easily, Windows usually does not.
+- PowerShell 7 or Windows PowerShell 5.1 on Windows.
 
 ### macOS and Linux
 
@@ -65,9 +66,8 @@ go run ./cmd/gateway
 
 ### Windows
 
-Use PowerShell for Go commands. The Bash setup scripts do not run directly in
-PowerShell, so the easiest Windows paths are Docker Desktop or WSL. `make` is
-not required.
+Use PowerShell. `make`, Bash, Docker, Git Bash, and WSL are not required for the
+local Windows path.
 
 Clone:
 
@@ -76,23 +76,27 @@ git clone https://github.com/trfhgx/vertex-gemini-openai-gateway.git
 cd vertex-gemini-openai-gateway
 ```
 
-Run setup from WSL:
+Run setup:
 
-```bash
-./setup.sh
+```powershell
+.\scripts\setup-windows.ps1
 ```
 
-Production service-account setup from WSL:
+If PowerShell blocks local scripts, run this once for your user account:
 
-```bash
-./scripts/setup-production.sh --project your-gcp-project --model gemini-2.5-flash
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
-Then run from PowerShell or WSL:
+Then run:
 
 ```powershell
 go run ./cmd/gateway
 ```
+
+Production service-account setup still uses the Bash script today. Run it from
+WSL, or configure `GOOGLE_APPLICATION_CREDENTIALS` in `.env` yourself after
+creating a service-account key in Google Cloud Console.
 
 ### Docker
 
