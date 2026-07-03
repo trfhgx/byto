@@ -134,3 +134,126 @@ jobs:
           if ($wingetLog -notmatch "Google.CloudSDK") {
             throw "Google Cloud CLI install path was not exercised"
           }
+
+  windows-native-production-setup-e2e:
+    name: Windows Native Production Setup E2E
+    runs-on: windows-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up fake package manager and gcloud
+        shell: pwsh
+        run: |
+          $fakeBin = Join-Path $env:RUNNER_TEMP "byto-production-fake-bin"
+          New-Item -ItemType Directory -Force -Path $fakeBin | Out-Null
+          $goPath = (Get-Command go).Source
+          $goRoot = (& go env GOROOT)
+
+          @"
+          param([Parameter(ValueFromRemainingArguments=`$true)][string[]]`$GcloudArgs)
+          `$log = `$env:FAKE_GCLOUD_LOG
+          if (`$log) {
+            (`$GcloudArgs -join " ") | Add-Content `$log
+          }
+          if (`$GcloudArgs.Count -eq 0) { exit 2 }
+          if (`$GcloudArgs[0] -eq "config" -and `$GcloudArgs[1] -eq "set" -and `$GcloudArgs[2] -eq "project") { exit 0 }
+          if (`$GcloudArgs[0] -eq "auth" -and `$GcloudArgs[1] -eq "list") { "ci-user@example.com"; exit 0 }
+          if (`$GcloudArgs[0] -eq "auth" -and `$GcloudArgs[1] -eq "login") { exit 0 }
+          if (`$GcloudArgs[0] -eq "services" -and `$GcloudArgs[1] -eq "enable") { exit 0 }
+          if (`$GcloudArgs[0] -eq "iam" -and `$GcloudArgs[1] -eq "service-accounts" -and `$GcloudArgs[2] -eq "describe") { exit 1 }
+          if (`$GcloudArgs[0] -eq "iam" -and `$GcloudArgs[1] -eq "service-accounts" -and `$GcloudArgs[2] -eq "create") { exit 0 }
+          if (`$GcloudArgs[0] -eq "iam" -and `$GcloudArgs[1] -eq "service-accounts" -and `$GcloudArgs[2] -eq "keys" -and `$GcloudArgs[3] -eq "create") {
+            `$keyPath = `$GcloudArgs[4]
+            `$email = ""
+            foreach (`$arg in `$GcloudArgs) {
+              if (`$arg -like "--iam-account=*") { `$email = `$arg.Substring("--iam-account=".Length) }
+            }
+            `$dir = Split-Path -Parent `$keyPath
+            if (`$dir) { New-Item -ItemType Directory -Force -Path `$dir | Out-Null }
+            @{
+              type = "service_account"
+              project_id = "ci-project"
+              private_key_id = "fake-key-id"
+              private_key = "-----BEGIN PRIVATE KEY-----`nFAKE`n-----END PRIVATE KEY-----`n"
+              client_email = `$email
+              client_id = "1234567890"
+              token_uri = "https://oauth2.googleapis.com/token"
+            } | ConvertTo-Json | Set-Content -Path `$keyPath -Encoding utf8
+            exit 0
+          }
+          if (`$GcloudArgs[0] -eq "projects" -and `$GcloudArgs[1] -eq "add-iam-policy-binding") { exit 0 }
+          if (`$GcloudArgs[0] -eq "projects" -and `$GcloudArgs[1] -eq "get-ancestors") { "organization 123456789"; exit 0 }
+          if (`$GcloudArgs[0] -eq "resource-manager" -and `$GcloudArgs[1] -eq "org-policies") { exit 0 }
+          if (`$GcloudArgs[0] -eq "organizations" -and `$GcloudArgs[1] -eq "add-iam-policy-binding") { exit 0 }
+          Write-Error "fake gcloud unsupported: `$(`$GcloudArgs -join ' ')"
+          exit 2
+          "@ | Set-Content -Path (Join-Path $fakeBin "fake-gcloud.ps1") -Encoding utf8
+
+          @"
+          @echo off
+          powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0fake-gcloud.ps1" %*
+          exit /b %ERRORLEVEL%
+          "@ | Set-Content -Path (Join-Path $fakeBin "gcloud.cmd") -Encoding ascii
+
+          @"
+          @echo off
+          echo fake winget %*>>"%RUNNER_TEMP%\byto-production-winget.log"
+          echo %* | findstr /C:"GoLang.Go" >nul
+          if not errorlevel 1 (
+            (
+              echo @echo off
+              echo set "GOROOT=$goRoot"
+              echo "$goPath" %%*
+              echo exit /b %%ERRORLEVEL%%
+            ) > "$fakeBin\go.cmd"
+            exit /b 0
+          )
+          echo %* | findstr /C:"Google.CloudSDK" >nul
+          if not errorlevel 1 (
+            exit /b 0
+          )
+          exit /b 1
+          "@ | Set-Content -Path (Join-Path $fakeBin "winget.cmd") -Encoding ascii
+
+          Add-Content $env:GITHUB_PATH $fakeBin
+          "FAKE_GCLOUD_LOG=$env:RUNNER_TEMP\byto-production-gcloud.log" | Add-Content $env:GITHUB_ENV
+
+      - name: Run native Windows production setup end to end
+        shell: pwsh
+        env:
+          SKIP_VERSION_CHECK: "1"
+        run: |
+          .\scripts\setup-production-windows.ps1 `
+            -Project ci-project `
+            -Location global `
+            -ServiceAccountName ci-gateway `
+            -KeyPath secrets\ci-gateway.json `
+            -ApiKey ci-gateway-key `
+            -NonInteractive `
+            -SkipVerify `
+            -InstallGo `
+            -InstallGcloud `
+            -ForceInstallDependencies
+
+      - name: Verify native Windows production outputs
+        shell: pwsh
+        run: |
+          if (-not (Test-Path ".env")) { throw ".env was not created" }
+          if (-not (Test-Path "secrets\ci-gateway.json")) { throw "service account key was not created" }
+          $envText = Get-Content ".env" -Raw
+          if ($envText -notmatch "GOOGLE_CLOUD_PROJECT=ci-project") { throw ".env project missing" }
+          if ($envText -notmatch "GATEWAY_API_KEYS=ci-gateway-key") { throw ".env API key missing" }
+          if ($envText -notmatch "GOOGLE_APPLICATION_CREDENTIALS=secrets\\ci-gateway.json") { throw ".env credentials path missing" }
+          $keyText = Get-Content "secrets\ci-gateway.json" -Raw
+          if ($keyText -notmatch "ci-gateway@ci-project.iam.gserviceaccount.com") { throw "service account email missing from key" }
+          $gcloudLog = Get-Content $env:FAKE_GCLOUD_LOG -Raw
+          if ($gcloudLog -notmatch "config set project ci-project") { throw "project config was not set" }
+          if ($gcloudLog -notmatch "services enable aiplatform.googleapis.com iam.googleapis.com serviceusage.googleapis.com cloudresourcemanager.googleapis.com") { throw "API enable step missing" }
+          if ($gcloudLog -notmatch "iam service-accounts create ci-gateway") { throw "service account create step missing" }
+          if ($gcloudLog -notmatch "projects add-iam-policy-binding ci-project --member=serviceAccount:ci-gateway@ci-project.iam.gserviceaccount.com --role=roles/aiplatform.user") { throw "aiplatform role grant missing" }
+          if ($gcloudLog -notmatch "projects add-iam-policy-binding ci-project --member=serviceAccount:ci-gateway@ci-project.iam.gserviceaccount.com --role=roles/serviceusage.serviceUsageConsumer") { throw "service usage role grant missing" }
+          if ($gcloudLog -notmatch "iam service-accounts keys create secrets\\ci-gateway.json --iam-account=ci-gateway@ci-project.iam.gserviceaccount.com") { throw "key create step missing" }
+          $wingetLog = Get-Content "$env:RUNNER_TEMP\byto-production-winget.log" -Raw
+          if ($wingetLog -notmatch "GoLang.Go") { throw "Go install path was not exercised" }
+          if ($wingetLog -notmatch "Google.CloudSDK") { throw "Google Cloud CLI install path was not exercised" }

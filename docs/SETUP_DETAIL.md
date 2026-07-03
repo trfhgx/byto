@@ -28,17 +28,17 @@ During setup, choose one gateway access mode:
 make setup production
 ```
 
+On Windows, use the native PowerShell setup:
+
+```powershell
+.\scripts\setup-production-windows.ps1
+```
+
 Production setup creates or reuses a Google service account, grants Vertex access, creates an ignored key under `secrets/`, writes `.env`, copies the gateway API key to your clipboard, and can verify the gateway through the Go server.
 
 The production path is the right default for Docker, VPS, and other long-running server deployments because service-account auth does not expire like a local access token.
 
-If Google Cloud CLI is missing, production setup can install it:
-
-```bash
-make setup production INSTALL_GCLOUD=1
-```
-
-Interactive setup also offers to install it when it is missing.
+If Google Cloud CLI is missing, interactive setup offers to install it.
 
 ## Switch Vertex Auth Mode
 

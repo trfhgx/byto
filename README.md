@@ -26,16 +26,15 @@ It is built for explicit model selection, service API keys, production service-a
 Clone the repo first:
 
 ```bash
-git clone https://github.com/trfhgx/vertex-gemini-openai-gateway.git
-cd vertex-gemini-openai-gateway
+git clone https://github.com/trfhgx/byto.git
+cd byto
 ```
 
 Prerequisites:
 
 - A Google Cloud project with Vertex AI access.
-- Go 1.22 or newer. Interactive setup can install it for you when a supported package manager is available.
+- Go 1.22 or newer. Setup can install it automatically.
 - Google Cloud CLI (`gcloud`). Interactive setup can install it for you when a supported package manager is available.
-- Docker. Optional, only needed for the Docker path.
 - `make`. Optional; macOS/Linux often have it or can install it easily, Windows usually does not.
 - PowerShell 7 or Windows PowerShell 5.1 on Windows.
 
@@ -55,7 +54,7 @@ make run
 Production service-account setup with `make`:
 
 ```bash
-make setup production PROJECT=your-gcp-project MODEL=gemini-2.5-flash
+make setup production
 ```
 
 Without `make`:
@@ -63,7 +62,7 @@ Without `make`:
 ```bash
 ./setup.sh
 go run ./cmd/gateway
-./scripts/setup-production.sh --project your-gcp-project --model gemini-2.5-flash
+./scripts/setup-production.sh
 ```
 
 ### Windows
@@ -74,8 +73,8 @@ local Windows path.
 Clone:
 
 ```powershell
-git clone https://github.com/trfhgx/vertex-gemini-openai-gateway.git
-cd vertex-gemini-openai-gateway
+git clone https://github.com/trfhgx/byto.git
+cd byto
 ```
 
 Run setup:
@@ -96,9 +95,11 @@ Then run:
 go run ./cmd/gateway
 ```
 
-Production service-account setup still uses the Bash script today. Run it from
-WSL, or configure `GOOGLE_APPLICATION_CREDENTIALS` in `.env` yourself after
-creating a service-account key in Google Cloud Console.
+Production service-account setup:
+
+```powershell
+.\scripts\setup-production-windows.ps1
+```
 
 ### Docker
 
@@ -168,7 +169,7 @@ Live Vertex checks require real Google auth:
 make test-live MODEL=gemini-2.5-flash
 ```
 
-CI also runs a fake-cloud production setup e2e on Linux and Windows so the `make setup production` path stays portable.
+CI also runs fake-cloud production setup e2e checks for Linux, macOS/Linux-style Bash on Windows, and the native Windows PowerShell setup path.
 
 ---
 
