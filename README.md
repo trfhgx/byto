@@ -43,6 +43,8 @@ Prerequisites:
 
 The setup scripts use Bash. Use either the `make` commands or the direct script commands.
 
+Use `make setup production` if you do not want to log in every time.
+
 With `make`:
 
 ```bash
