@@ -24,6 +24,7 @@ VERTEX_RETRY_INITIAL_MS="${VERTEX_RETRY_INITIAL_MS:-250}"
 VERTEX_RETRY_MAX_MS="${VERTEX_RETRY_MAX_MS:-2000}"
 NON_INTERACTIVE=0
 SKIP_VERIFY=0
+INSTALL_GCLOUD=0
 SETUP_LOG_DIR="$ROOT_DIR/.cache/setup"
 HAS_TTY=0
 
@@ -41,6 +42,7 @@ Options:
   KEY_PATH=PATH                  Service account key path, default: secrets/llm-gateway-sa.json.
   NON_INTERACTIVE=1              Do not prompt.
   SKIP_VERIFY=1                  Skip live gateway verification.
+  INSTALL_GCLOUD=1               Install Google Cloud CLI if missing.
 EOF
 }
 
@@ -54,6 +56,7 @@ while [ "$#" -gt 0 ]; do
     --api-key) API_KEYS="${2:-}"; shift 2 ;;
     --non-interactive) NON_INTERACTIVE=1; shift ;;
     --skip-verify) SKIP_VERIFY=1; shift ;;
+    --install-gcloud) INSTALL_GCLOUD=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Unknown option: $1"; usage; exit 1 ;;
   esac
@@ -209,6 +212,140 @@ copy_to_clipboard() {
   else
     warn "Could not copy API key to clipboard on this OS"
   fi
+}
+
+select_menu() {
+  local title="$1"
+  shift
+  local selected="$1"
+  shift
+  local options=("$@")
+  local key=""
+  local i
+
+  if [ "$NON_INTERACTIVE" -eq 1 ]; then
+    printf '%s' "$selected"
+    return
+  fi
+  if [ "$HAS_TTY" -ne 1 ]; then
+    fail "Interactive production setup needs a terminal. Rerun from a terminal or use NON_INTERACTIVE=1."
+  fi
+
+  printf '%s\n' "$title" >/dev/tty
+  tput civis >/dev/tty 2>/dev/null || true
+  trap 'tput cnorm >/dev/tty 2>/dev/null || true' EXIT
+  while true; do
+    for i in "${!options[@]}"; do
+      printf '%s\r' "$CLEAR_LINE" >/dev/tty
+      if [ "$i" -eq "$selected" ]; then
+        printf '  %s> %s%s\n' "$CYAN" "${options[$i]}" "$RESET" >/dev/tty
+      else
+        printf '    %s\n' "${options[$i]}" >/dev/tty
+      fi
+    done
+
+    IFS= read -rsn1 key </dev/tty
+    if [ "$key" = "" ]; then
+      tput cnorm >/dev/tty 2>/dev/null || true
+      trap - EXIT
+      printf '\n' >/dev/tty
+      printf '%s' "$selected"
+      return
+    fi
+
+    if [ "$key" = $'\033' ]; then
+      IFS= read -rsn2 key </dev/tty || true
+      case "$key" in
+        "[A")
+          selected=$((selected - 1))
+          if [ "$selected" -lt 0 ]; then
+            selected=$((${#options[@]} - 1))
+          fi
+          ;;
+        "[B")
+          selected=$((selected + 1))
+          if [ "$selected" -ge "${#options[@]}" ]; then
+            selected=0
+          fi
+          ;;
+      esac
+    fi
+
+    printf '\033[%dA' "${#options[@]}" >/dev/tty
+  done
+}
+
+ensure_command_on_path() {
+  local cmd="$1"
+  shift
+  if command -v "$cmd" >/dev/null 2>&1; then
+    return 0
+  fi
+  local candidate
+  for candidate in "$@"; do
+    if [ -x "$candidate" ]; then
+      local dir
+      dir="$(dirname "$candidate")"
+      export PATH="$dir:$PATH"
+      ok "Added $dir to PATH for this setup run"
+      return 0
+    fi
+  done
+  return 1
+}
+
+check_gcloud() {
+  if [ "${BYTO_GCLOUD_FORCE_MISSING:-0}" != "1" ]; then
+    ensure_command_on_path gcloud \
+      "${BYTO_GCLOUD_INSTALL_PREFIX:-$HOME/google-cloud-sdk}/bin/gcloud" \
+      "$HOME/google-cloud-sdk/bin/gcloud" \
+      "/opt/homebrew/bin/gcloud" \
+      "/usr/local/bin/gcloud" \
+      "/opt/google-cloud-cli/bin/gcloud" \
+      "/opt/homebrew/share/google-cloud-sdk/bin/gcloud" \
+      "/usr/local/share/google-cloud-sdk/bin/gcloud" \
+      "/c/Program Files (x86)/Google/Cloud SDK/google-cloud-sdk/bin/gcloud" \
+      "/c/Program Files/Google/Cloud SDK/google-cloud-sdk/bin/gcloud" >/dev/null 2>&1 || true
+  fi
+
+  if [ "${BYTO_GCLOUD_FORCE_MISSING:-0}" != "1" ] && command -v gcloud >/dev/null 2>&1; then
+    ok "gcloud CLI found"
+    return 0
+  fi
+
+  warn "gcloud is not installed. It is required for production setup."
+  local choice=1
+  if [ "$INSTALL_GCLOUD" -eq 1 ]; then
+    choice=0
+  elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+    choice=1
+  else
+    choice="$(select_menu "Install Google Cloud CLI now?" 0 "Install Google Cloud CLI" "Skip for now" "Abort setup")"
+  fi
+
+  if [ "$choice" -eq 0 ]; then
+    run_quiet "Install Google Cloud CLI" "$ROOT_DIR/scripts/install-gcloud.sh"
+    export BYTO_GCLOUD_FORCE_MISSING=0
+    export PATH="${BYTO_GCLOUD_INSTALL_PREFIX:-$HOME/google-cloud-sdk}/bin:$PATH"
+    hash -r 2>/dev/null || true
+    ensure_command_on_path gcloud \
+      "${BYTO_GCLOUD_INSTALL_PREFIX:-$HOME/google-cloud-sdk}/bin/gcloud" \
+      "$HOME/google-cloud-sdk/bin/gcloud" \
+      "/opt/homebrew/bin/gcloud" \
+      "/usr/local/bin/gcloud" \
+      "/opt/google-cloud-cli/bin/gcloud" \
+      "/c/Program Files (x86)/Google/Cloud SDK/google-cloud-sdk/bin/gcloud" \
+      "/c/Program Files/Google/Cloud SDK/google-cloud-sdk/bin/gcloud" >/dev/null 2>&1 || true
+    if command -v gcloud >/dev/null 2>&1; then
+      ok "Installed gcloud CLI"
+      return 0
+    fi
+    fail "Google Cloud CLI install finished, but gcloud is not on PATH. Open a new terminal or add it to PATH, then rerun setup."
+  fi
+  if [ "$choice" -eq 2 ]; then
+    fail "Setup aborted before installing gcloud."
+  fi
+  fail "Production setup needs gcloud. Install Google Cloud CLI or rerun with INSTALL_GCLOUD=1."
 }
 
 generate_key() {
@@ -420,9 +557,7 @@ fi
 if [ -z "$PROJECT_ID" ]; then
   fail "PROJECT is required"
 fi
-if ! command -v gcloud >/dev/null 2>&1; then
-  fail "gcloud is required for production setup"
-fi
+check_gcloud
 if ! command -v go >/dev/null 2>&1; then
   fail "Go is required for live verification"
 fi

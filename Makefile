@@ -65,6 +65,9 @@ endif
 ifneq ($(filter 1 true yes,$(SKIP_VERIFY)),)
 PRODUCTION_SETUP_ARGS += --skip-verify
 endif
+ifneq ($(filter 1 true yes,$(INSTALL_GCLOUD)),)
+PRODUCTION_SETUP_ARGS += --install-gcloud
+endif
 
 SWITCH_ARGS=
 ifneq ($(strip $(AUTH)),)

@@ -11,13 +11,13 @@ jobs:
     name: Build & Test
     runs-on: ubuntu-latest
     steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
       - name: Set up Go
-        uses: actions/setup-go@v4
+        uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-
-      - name: Check out code
-        uses: actions/checkout@v3
 
       - name: Verify modules
         run: go mod verify
@@ -27,3 +27,30 @@ jobs:
 
       - name: Test
         run: go test -v -race ./...
+
+  setup-production-e2e:
+    name: Production Setup E2E (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install make on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: choco install make -y --no-progress
+
+      - name: Run production setup e2e
+        run: test/e2e/setup_production_fake_gcloud.sh
