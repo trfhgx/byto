@@ -10,7 +10,7 @@ http://localhost:8080
 
 ## Authentication
 
-By default, all `/v1/*` endpoints require a service API key:
+By default, mutating and Vertex-backed `/v1/*` endpoints require a service API key:
 
 ```http
 Authorization: Bearer <gateway-api-key>
@@ -29,15 +29,15 @@ GATEWAY_ALLOW_UNAUTHENTICATED=true
 GATEWAY_API_KEYS=
 ```
 
-Open mode disables Byto's bearer-token check for `/v1/*`. Keep it behind private networking, Cloud Run IAM, or another trusted gateway.
+Open mode disables Byto's bearer-token check for protected `/v1/*` endpoints. Keep it behind private networking, Cloud Run IAM, or another trusted gateway.
 
-`GET /healthz` does not require authentication.
+`GET /healthz` and `GET /v1/models` do not require authentication.
 
 ## Common Headers
 
 | Header | Required | Description |
 | --- | --- | --- |
-| `Authorization` | Yes for `/v1/*` unless open mode is enabled | `Bearer <gateway-api-key>`. |
+| `Authorization` | Yes for protected endpoints unless open mode is enabled | `Bearer <gateway-api-key>`. |
 | `Content-Type` | Yes for JSON requests | Use `application/json`. |
 | `X-Request-ID` | No | Request ID to echo back. Byto generates one if omitted. |
 | `X-App-ID` | No | App/service name written to request logs. |
@@ -49,7 +49,7 @@ Every response includes `X-Request-ID`.
 | Method | Path | Auth | Description |
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | No | Health check. |
-| `GET` | `/v1/models` | Yes | Lists configured models. |
+| `GET` | `/v1/models` | No | Lists configured models. |
 | `GET` | `/v1/models/{model}` | Yes | Returns one configured model and known gateway/catalog metadata. |
 | `POST` | `/v1/caches` | Yes | Creates Vertex cached content. |
 | `GET` | `/v1/caches` | Yes | Lists Vertex cached content. |
@@ -76,8 +76,7 @@ Returns enabled model IDs visible to callers.
 ### Request
 
 ```bash
-curl -s http://localhost:8080/v1/models \
-  -H "Authorization: Bearer <gateway-api-key>"
+curl -s http://localhost:8080/v1/models | jq
 ```
 
 ### Response
@@ -153,7 +152,7 @@ curl -s http://localhost:8080/v1/models/gemini-2.5-flash \
 }
 ```
 
-`supported_parameters` means parameters this gateway is prepared to accept and map for that model. Google Vertex publisher-model metadata currently exposes model presence, launch stage, version state, and UI/actions metadata, but it does not return a per-model list of supported generation arguments such as `frequencyPenalty` or `responseSchema`. Keep per-model parameter notes in `config/models.json` after reviewing Google model docs and live behavior.
+`supported_parameters` means parameters this gateway is prepared to accept and map for that model. Google's supported endpoint model list tells us which model IDs are current for a location, but it does not return a per-model list of supported generation arguments such as `frequencyPenalty` or `responseSchema`. Keep per-model parameter notes in `config/models.json` after reviewing Google model docs and live behavior.
 
 ## Vertex Context Caches
 
@@ -404,6 +403,8 @@ Resolution order:
 3. Accept enabled and available entries from `MODEL_CATALOG_PATH`.
 4. If `ALLOW_ANY_GEMINI_MODEL=true`, accept any `gemini-*` model ID.
 5. Reject the request.
+
+When startup catalog refresh is enabled, Byto updates `MODEL_CATALOG_PATH` against the current supported Google Gemini endpoint model list, then verifies each supported candidate with Vertex `countTokens`. Passing candidates become enabled and available for the configured project/location. Hard failures such as `404`, `403`, `401`, and `400` disable the entry. Transient failures such as `429`, `5xx`, or timeout keep the previous state.
 
 ## Errors
 

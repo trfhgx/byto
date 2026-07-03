@@ -100,6 +100,25 @@ func (c *Client) StreamGenerateContent(ctx context.Context, model string, in Gen
 	return parseStream(resp.Body, onChunk)
 }
 
+func (c *Client) CountTokens(ctx context.Context, model string, in GenerateRequest) error {
+	body, err := json.Marshal(in)
+	if err != nil {
+		return err
+	}
+	u := c.modelMethodURL(model, "countTokens")
+	resp, err := c.do(ctx, http.MethodPost, u, body, "countTokens", RequestOptions{})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		b, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		return &VertexError{Operation: "countTokens", Status: resp.StatusCode, Body: string(b)}
+	}
+	io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	return nil
+}
+
 func (c *Client) CreateCachedContent(ctx context.Context, body json.RawMessage) (json.RawMessage, error) {
 	normalized, err := c.normalizeCachedContentBody(body)
 	if err != nil {

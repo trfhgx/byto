@@ -1,14 +1,14 @@
 {
   "version": 1,
-  "updated_at": "2026-07-02T17:18:11.199533Z",
-  "source": "vertex-live-refresh",
+  "updated_at": "2026-07-03T08:53:18.305609Z",
+  "source": "google-supported-gemini-models",
   "models": [
     {
       "id": "gemini-1.5-pro-002",
       "publisher": "google",
       "family": "gemini-pro",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "GA",
       "supported_actions": [
         "openEvaluationPipeline",
@@ -17,15 +17,15 @@
         "openNotebooks"
       ],
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Disabled after live generateContent returned NOT_FOUND for the configured project/location. Keep disabled unless a later live e2e proves it works.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-2.0-flash-001",
       "publisher": "google",
       "family": "gemini-flash",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "GA",
       "supported_actions": [
         "openGenerationAiStudio",
@@ -33,84 +33,111 @@
         "openNotebooks"
       ],
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Disabled after live generateContent returned NOT_FOUND for the configured project/location. Keep disabled unless a later live e2e proves it works.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-2.0-flash-lite-001",
       "publisher": "google",
       "family": "gemini-flash",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Disabled after live generateContent returned NOT_FOUND for the configured project/location. Keep disabled unless a later live e2e proves it works.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-2.5-flash",
+      "display_name": "Gemini 2.5 Flash",
       "publisher": "google",
       "family": "gemini-flash",
-      "enabled": false,
+      "enabled": true,
       "available": true,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Verified by Vertex countTokens for the configured project/location.",
+      "last_seen_at": "2026-07-03T08:53:10.704165Z"
     },
     {
       "id": "gemini-2.5-flash-lite",
+      "display_name": "Gemini 2.5 Flash-Lite",
       "publisher": "google",
       "family": "gemini-flash",
-      "enabled": false,
+      "enabled": true,
       "available": true,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Verified by Vertex countTokens for the configured project/location.",
+      "last_seen_at": "2026-07-03T08:53:11.648538Z"
+    },
+    {
+      "id": "gemini-2.5-flash-lite-preview-09-2025",
+      "display_name": "Gemini 2.5 Flash-Lite Preview",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "PUBLIC_PREVIEW",
+      "capabilities": {},
+      "notes": "Verified by Vertex countTokens for the configured project/location.",
+      "last_seen_at": "2026-07-03T08:53:12.635693Z"
     },
     {
       "id": "gemini-2.5-flash-preview-04-17",
       "publisher": "google",
       "family": "gemini-flash",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "PUBLIC_PREVIEW",
       "supported_actions": [
         "openGenerationAiStudio"
       ],
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Disabled after live generateContent returned NOT_FOUND for the configured project/location. Keep disabled unless a later live e2e proves it works.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
+    },
+    {
+      "id": "gemini-2.5-flash-preview-09-2025",
+      "display_name": "Gemini 2.5 Flash Preview",
+      "publisher": "google",
+      "family": "gemini-flash",
+      "enabled": false,
+      "available": false,
+      "launch_stage": "PUBLIC_PREVIEW",
+      "capabilities": {},
+      "notes": "Disabled because Vertex countTokens verification failed for this project/location: vertex countTokens status 404: {   \"error\": {     \"code\": 404,     \"message\": \"Publisher model `projects/project-7fe580c4-4767-4bc3-99c/locations/global/publishers/google/models/gemini-2.5-flash-preview-09-2025` was not found or your project does not have access to it. Ensure you are using a valid m...",
+      "last_seen_at": "2026-07-03T08:53:09.012217Z"
     },
     {
       "id": "gemini-2.5-flash-tts",
       "publisher": "google",
       "family": "gemini-flash",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Not in the current supported Google Gemini endpoint model list. Kept only as disabled historical metadata.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-2.5-pro",
+      "display_name": "Gemini 2.5 Pro",
       "publisher": "google",
       "family": "gemini-pro",
-      "enabled": false,
+      "enabled": true,
       "available": true,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Verified by Vertex countTokens for the configured project/location.",
+      "last_seen_at": "2026-07-03T08:53:14.760838Z"
     },
     {
       "id": "gemini-2.5-pro-exp-03-25",
       "publisher": "google",
       "family": "gemini-pro",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "EXPERIMENTAL",
       "supported_actions": [
         "openGenerationAiStudio",
@@ -118,19 +145,19 @@
         "openNotebooks"
       ],
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Disabled after live generateContent returned NOT_FOUND for the configured project/location. Keep disabled unless a later live e2e proves it works.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-2.5-pro-tts",
       "publisher": "google",
       "family": "gemini-pro",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Not in the current supported Google Gemini endpoint model list. Kept only as disabled historical metadata.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-3-flash-preview",
@@ -177,74 +204,75 @@
           "extra_body.google.include_thoughts"
         ]
       },
-      "notes": "Fast/low-latency profile. Review live Vertex metadata for production before relying on preview models.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Verified by Vertex countTokens for the configured project/location.",
+      "last_seen_at": "2026-07-03T08:53:15.652019Z"
     },
     {
       "id": "gemini-3-pro-image",
       "publisher": "google",
       "family": "gemini-pro",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Not in the current supported Google Gemini endpoint model list. Kept only as disabled historical metadata.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-3.1-flash-image",
       "publisher": "google",
       "family": "gemini-flash",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Not in the current supported Google Gemini endpoint model list. Kept only as disabled historical metadata.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-3.1-flash-image-preview",
       "publisher": "google",
       "family": "gemini-flash",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "PUBLIC_PREVIEW",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Not in the current supported Google Gemini endpoint model list. Kept only as disabled historical metadata.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-3.1-flash-lite",
+      "display_name": "Gemini 3.1 Flash-Lite",
       "publisher": "google",
       "family": "gemini-flash",
-      "enabled": false,
+      "enabled": true,
       "available": true,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Verified by Vertex countTokens for the configured project/location.",
+      "last_seen_at": "2026-07-03T08:53:16.547354Z"
     },
     {
       "id": "gemini-3.1-flash-lite-image",
       "publisher": "google",
       "family": "gemini-flash",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Not in the current supported Google Gemini endpoint model list. Kept only as disabled historical metadata.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-3.1-flash-lite-preview",
       "publisher": "google",
       "family": "gemini-flash",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "PUBLIC_PREVIEW",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Not in the current supported Google Gemini endpoint model list. Kept only as disabled historical metadata.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-3.1-pro-preview",
@@ -293,15 +321,15 @@
           "extra_body.google.include_thoughts"
         ]
       },
-      "notes": "Higher-reasoning profile. Review live Vertex metadata for production before relying on preview models.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Verified by Vertex countTokens for the configured project/location.",
+      "last_seen_at": "2026-07-03T08:53:17.424975Z"
     },
     {
       "id": "gemini-3.1-pro-preview-customtools",
       "display_name": "Gemini 3.1 Pro Preview Custom Tools",
       "publisher": "google",
       "family": "gemini-pro",
-      "enabled": true,
+      "enabled": false,
       "available": false,
       "capabilities": {
         "reasoning_effort": [
@@ -329,36 +357,37 @@
     },
     {
       "id": "gemini-3.5-flash",
+      "display_name": "Gemini 3.5 Flash",
       "publisher": "google",
       "family": "gemini-flash",
-      "enabled": false,
+      "enabled": true,
       "available": true,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Verified by Vertex countTokens for the configured project/location.",
+      "last_seen_at": "2026-07-03T08:53:18.305608Z"
     },
     {
       "id": "gemini-embedding-2",
       "publisher": "google",
       "family": "gemini",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Not in the current supported Google Gemini endpoint model list. Kept only as disabled historical metadata.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     },
     {
       "id": "gemini-live-2.5-flash-native-audio",
       "publisher": "google",
       "family": "gemini-flash",
       "enabled": false,
-      "available": true,
+      "available": false,
       "launch_stage": "GA",
       "capabilities": {},
-      "notes": "Discovered from Vertex live catalog. Review capabilities before enabling.",
-      "last_seen_at": "2026-07-02T17:18:11.199527Z"
+      "notes": "Not in the current supported Google Gemini endpoint model list. Kept only as disabled historical metadata.",
+      "last_seen_at": "2026-07-03T07:27:06.95568Z"
     }
   ]
 }

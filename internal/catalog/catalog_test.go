@@ -2,7 +2,7 @@ package catalog
 
 import "testing"
 
-func TestMergeLivePreservesMetadataAndDisablesUnknown(t *testing.T) {
+func TestMergeSupportedPreservesVerifiedModelsAndAddsNewModelsDisabled(t *testing.T) {
 	c := Catalog{Models: []Model{{
 		ID:        "gemini-known",
 		Enabled:   true,
@@ -10,9 +10,18 @@ func TestMergeLivePreservesMetadataAndDisablesUnknown(t *testing.T) {
 		Capabilities: Capabilities{
 			ReasoningEffort: []string{"low", "medium"},
 		},
+	}, {
+		ID:        "gemini-disabled",
+		Enabled:   false,
+		Available: true,
+	}, {
+		ID:        "gemini-old",
+		Enabled:   true,
+		Available: true,
 	}}}
-	c.MergeLive([]LiveModel{
+	c.MergeSupported([]LiveModel{
 		{ID: "gemini-known", DisplayName: "Known"},
+		{ID: "gemini-disabled", DisplayName: "Disabled"},
 		{ID: "gemini-new", DisplayName: "New"},
 	})
 	ids := c.EnabledAvailableIDs()
@@ -26,15 +35,18 @@ func TestMergeLivePreservesMetadataAndDisablesUnknown(t *testing.T) {
 		}
 		if m.ID == "gemini-new" {
 			foundNew = true
-			if m.Enabled {
-				t.Fatal("new live model should not be auto-enabled")
+			if m.Enabled || m.Available {
+				t.Fatal("new supported model should stay disabled and unavailable until verified")
 			}
-			if !m.Available {
-				t.Fatal("new live model should be marked available")
-			}
+		}
+		if m.ID == "gemini-disabled" && m.Enabled {
+			t.Fatal("existing disabled model should stay disabled after live refresh")
+		}
+		if m.ID == "gemini-old" && m.Available {
+			t.Fatal("model missing from supported list should be marked unavailable")
 		}
 	}
 	if !foundNew {
-		t.Fatal("new live model was not added")
+		t.Fatal("new supported model was not added")
 	}
 }

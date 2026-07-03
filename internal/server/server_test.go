@@ -20,6 +20,10 @@ import (
 
 type fakeGemini struct{}
 type fakeResourceExhaustedGemini struct{ fakeGemini }
+type fakeCatalogVerifier struct {
+	fakeGemini
+	results map[string]error
+}
 type fakeReasoningGemini struct {
 	fakeGemini
 	t               *testing.T
@@ -57,6 +61,12 @@ func (f fakeReasoningGemini) GenerateContent(ctx context.Context, model string, 
 }
 func (f fakeGemini) StreamGenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions, onChunk func(gemini.GenerateResponse) error) error {
 	return onChunk(gemini.GenerateResponse{Candidates: []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "hello"}}}}}, UsageMetadata: gemini.UsageMetadata{TrafficType: "ON_DEMAND_PRIORITY"}})
+}
+func (f fakeGemini) CountTokens(ctx context.Context, model string, in gemini.GenerateRequest) error {
+	return nil
+}
+func (f fakeCatalogVerifier) CountTokens(ctx context.Context, model string, in gemini.GenerateRequest) error {
+	return f.results[model]
 }
 func (f fakeGemini) CreateCachedContent(ctx context.Context, body json.RawMessage) (json.RawMessage, error) {
 	return json.RawMessage(`{"name":"projects/p/locations/global/cachedContents/cache-1"}`), nil
@@ -222,7 +232,7 @@ func TestChatCompletionPreservesResourceExhaustedStatus(t *testing.T) {
 
 func TestUnauthorized(t *testing.T) {
 	s := testServer(t)
-	req := httptest.NewRequest("GET", "/v1/models", nil)
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`))
 	w := httptest.NewRecorder()
 	s.Routes().ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
@@ -230,9 +240,8 @@ func TestUnauthorized(t *testing.T) {
 	}
 }
 
-func TestAllowUnauthenticated(t *testing.T) {
+func TestModelsListAllowsUnauthenticated(t *testing.T) {
 	s := testServer(t)
-	s.cfg.GatewayAllowUnauthenticated = true
 	req := httptest.NewRequest("GET", "/v1/models", nil)
 	w := httptest.NewRecorder()
 	s.Routes().ServeHTTP(w, req)
@@ -268,7 +277,7 @@ func TestAccessLogsHealthModelsAndAuthFailure(t *testing.T) {
 		t.Fatalf("models status %d", w.Code)
 	}
 
-	req = httptest.NewRequest("GET", "/v1/models", nil)
+	req = httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`))
 	w = httptest.NewRecorder()
 	s.Routes().ServeHTTP(w, req)
 	if w.Code != http.StatusUnauthorized {
@@ -280,7 +289,7 @@ func TestAccessLogsHealthModelsAndAuthFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	logs := string(b)
-	for _, want := range []string{`"event":"access"`, `"method":"GET"`, `"path":"/healthz"`, `"path":"/v1/models"`, `"remote_ip":"192.0.2.10"`, `"user_agent":"test-agent"`, `"auth_failure":"missing_authorization"`} {
+	for _, want := range []string{`"event":"access"`, `"method":"GET"`, `"path":"/healthz"`, `"path":"/v1/models"`, `"path":"/v1/chat/completions"`, `"remote_ip":"192.0.2.10"`, `"user_agent":"test-agent"`, `"auth_failure":"missing_authorization"`} {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("log missing %s:\n%s", want, logs)
 		}
@@ -361,6 +370,68 @@ func TestModelMetadataIncludesSupportedParameters(t *testing.T) {
 	}
 	if info.Capabilities == nil || info.Capabilities.Streaming == nil || !*info.Capabilities.Streaming {
 		t.Fatalf("streaming capability %#v", info.Capabilities)
+	}
+}
+
+func TestRefreshModelCatalogVerifiesCandidates(t *testing.T) {
+	dir := t.TempDir()
+	catalogPath := dir + "/models.json"
+	logPath := dir + "/requests.jsonl"
+	modelCatalog := catalog.Catalog{Version: 1, Models: []catalog.Model{
+		{
+			ID:        "gemini-2.5-flash",
+			Publisher: "google",
+			Enabled:   false,
+			Available: false,
+		},
+		{
+			ID:        "gemini-2.5-pro",
+			Publisher: "google",
+			Enabled:   true,
+			Available: true,
+		},
+		{
+			ID:        "gemini-3.5-flash",
+			Publisher: "google",
+			Enabled:   true,
+			Available: true,
+		},
+	}}
+	b, err := json.Marshal(modelCatalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(catalogPath, b, 0644); err != nil {
+		t.Fatal(err)
+	}
+	logger, err := gwlog.New(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{Project: "p", Location: "global", ModelCatalogPath: catalogPath, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: logPath, RequestTimeoutSeconds: 5}
+	s := New(cfg, fakeCatalogVerifier{results: map[string]error{
+		"gemini-2.5-pro":   &gemini.VertexError{Operation: "countTokens", Status: http.StatusNotFound, Body: `{"error":{"status":"NOT_FOUND"}}`},
+		"gemini-3.5-flash": context.DeadlineExceeded,
+	}}, logger)
+
+	s.refreshModelCatalog(catalogPath)
+
+	refreshed, err := catalog.Load(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]catalog.Model{}
+	for _, m := range refreshed.Models {
+		byID[m.ID] = m
+	}
+	if !byID["gemini-2.5-flash"].Enabled || !byID["gemini-2.5-flash"].Available {
+		t.Fatalf("successful verification should promote model: %#v", byID["gemini-2.5-flash"])
+	}
+	if byID["gemini-2.5-pro"].Enabled || byID["gemini-2.5-pro"].Available {
+		t.Fatalf("hard verification failure should disable model: %#v", byID["gemini-2.5-pro"])
+	}
+	if !byID["gemini-3.5-flash"].Enabled || !byID["gemini-3.5-flash"].Available {
+		t.Fatalf("inconclusive verification should keep previous state: %#v", byID["gemini-3.5-flash"])
 	}
 }
 

@@ -2,7 +2,6 @@ package e2e
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,10 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/example/go-llm-gateway/internal/auth"
 	"github.com/example/go-llm-gateway/internal/catalog"
 	"github.com/example/go-llm-gateway/internal/config"
-	"github.com/example/go-llm-gateway/internal/gemini"
 	"github.com/example/go-llm-gateway/internal/server"
 )
 
@@ -53,23 +50,6 @@ func repoRoot(t *testing.T) string {
 	}
 }
 
-func TestLiveVertexPublisherModels(t *testing.T) {
-	if os.Getenv("RUN_LIVE_VERTEX_TESTS") != "1" {
-		t.Skip("set RUN_LIVE_VERTEX_TESTS=1")
-	}
-	cfg := liveConfig(t)
-	client := gemini.NewClient(cfg, auth.NewDefaultTokenProvider())
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	models, err := client.ListPublisherModels(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(models) == 0 {
-		t.Fatal("expected at least one live publisher model")
-	}
-}
-
 func TestLiveVertexStartupCatalogRefresh(t *testing.T) {
 	if os.Getenv("RUN_LIVE_VERTEX_TESTS") != "1" {
 		t.Skip("set RUN_LIVE_VERTEX_TESTS=1")
@@ -96,7 +76,7 @@ func TestLiveVertexStartupCatalogRefresh(t *testing.T) {
 			t.Fatal(err)
 		}
 		lastSource = c.Source
-		if c.Source == "vertex-live-refresh" {
+		if c.Source == "google-supported-gemini-models" {
 			return
 		}
 		time.Sleep(250 * time.Millisecond)
@@ -155,7 +135,6 @@ func TestLiveVertexConfiguredCatalogModels(t *testing.T) {
 	defer ts.Close()
 
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/models", nil)
-	req.Header.Set("Authorization", "Bearer "+cfg.GatewayAPIKeys[0])
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

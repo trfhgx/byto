@@ -28,6 +28,7 @@ import (
 type GeminiClient interface {
 	GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error)
 	StreamGenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions, onChunk func(gemini.GenerateResponse) error) error
+	CountTokens(ctx context.Context, model string, in gemini.GenerateRequest) error
 	CreateCachedContent(ctx context.Context, body json.RawMessage) (json.RawMessage, error)
 	ListCachedContents(ctx context.Context, query url.Values) (json.RawMessage, error)
 	GetCachedContent(ctx context.Context, id string) (json.RawMessage, error)
@@ -75,32 +76,100 @@ func NewFromConfig(cfg config.Config) (*Server, error) {
 	gem := gemini.NewClient(cfg, auth.NewDefaultTokenProvider())
 	s := New(cfg, gem, logger)
 	if cfg.ModelCatalogRefreshOnStart && cfg.ModelCatalogPath != "" {
-		go s.refreshModelCatalog(gem, cfg.ModelCatalogPath)
+		go s.refreshModelCatalog(cfg.ModelCatalogPath)
 	}
 	return s, nil
 }
 
-func (s *Server) refreshModelCatalog(gem *gemini.Client, path string) {
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
-	defer cancel()
-	live, err := gem.ListPublisherModels(ctx)
-	if err != nil {
-		log.Printf("model catalog refresh warning: %v", err)
-		return
-	}
+func (s *Server) refreshModelCatalog(path string) {
+	supported := catalog.SupportedGoogleGeminiModels()
 	c, err := catalog.Load(path)
 	if err != nil {
 		log.Printf("model catalog refresh load warning path=%s err=%v", path, err)
 		return
 	}
-	c.MergeLive(live)
+	c.MergeSupported(supported)
+	verified, hardFailures, inconclusive := s.verifyModelCatalogCandidates(&c, supported)
 	if err := catalog.Save(path, c); err != nil {
 		log.Printf("model catalog refresh save warning path=%s err=%v", path, err)
 		return
 	}
 	s.setModelCatalog(c)
 	s.resolver.SetAllowedModels(c.EnabledAvailableIDs())
-	log.Printf("model catalog refreshed path=%s live_models=%d enabled_available=%d", path, len(live), len(c.EnabledAvailableIDs()))
+	log.Printf("model catalog refreshed path=%s source=supported_google_gemini_models supported_models=%d verified=%d hard_failures=%d inconclusive=%d enabled_available=%d", path, len(supported), verified, hardFailures, inconclusive, len(c.EnabledAvailableIDs()))
+}
+
+func (s *Server) verifyModelCatalogCandidates(c *catalog.Catalog, supported []catalog.LiveModel) (verified, hardFailures, inconclusive int) {
+	index := map[string]int{}
+	for i, m := range c.Models {
+		index[m.ID] = i
+	}
+	for _, model := range supported {
+		id := strings.TrimSpace(model.ID)
+		if id == "" {
+			continue
+		}
+		i, ok := index[id]
+		if !ok {
+			continue
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		err := s.gemini.CountTokens(ctx, id, catalogVerificationRequest())
+		cancel()
+		if err == nil {
+			c.Models[i].Enabled = true
+			c.Models[i].Available = true
+			c.Models[i].Notes = "Verified by Vertex countTokens for the configured project/location."
+			now := time.Now().UTC()
+			c.Models[i].LastSeenAt = &now
+			verified++
+			continue
+		}
+		if isHardModelVerificationFailure(err) {
+			c.Models[i].Enabled = false
+			c.Models[i].Available = false
+			c.Models[i].Notes = fmt.Sprintf("Disabled because Vertex countTokens verification failed for this project/location: %s", compactError(err))
+			hardFailures++
+			continue
+		}
+		if c.Models[i].Notes == "" {
+			c.Models[i].Notes = fmt.Sprintf("Vertex countTokens verification was inconclusive; keeping previous catalog state: %s", compactError(err))
+		}
+		inconclusive++
+	}
+	return verified, hardFailures, inconclusive
+}
+
+func catalogVerificationRequest() gemini.GenerateRequest {
+	maxOutputTokens := 1
+	return gemini.GenerateRequest{
+		Contents: []gemini.Content{{Role: "user", Parts: []gemini.Part{{Text: "ok"}}}},
+		GenerationConfig: &gemini.GenerationConfig{
+			MaxOutputTokens: &maxOutputTokens,
+		},
+	}
+}
+
+func isHardModelVerificationFailure(err error) bool {
+	var ve *gemini.VertexError
+	if !errors.As(err, &ve) {
+		return false
+	}
+	switch ve.Status {
+	case http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden, http.StatusNotFound:
+		return true
+	default:
+		return false
+	}
+}
+
+func compactError(err error) string {
+	msg := strings.TrimSpace(err.Error())
+	msg = strings.ReplaceAll(msg, "\n", " ")
+	if len(msg) > 300 {
+		msg = msg[:300] + "..."
+	}
+	return msg
 }
 
 func (s *Server) Routes() http.Handler {
@@ -121,10 +190,6 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 func (s *Server) models(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed")
-		return
-	}
-	if !s.authorized(r) {
-		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid_api_key")
 		return
 	}
 	models := s.resolver.ListModels()

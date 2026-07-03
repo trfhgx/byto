@@ -116,7 +116,7 @@ Byto resolves models in this order:
 4. If `ALLOW_ANY_GEMINI_MODEL=true`, accept any resolved model that starts with `gemini-`.
 5. Reject everything else.
 
-The catalog stores enabled state, live availability, supported actions, generation parameters, reasoning tiers, and reasoning-budget mappings. Startup refresh adds newly discovered Vertex Gemini models as disabled entries for review.
+The catalog stores enabled state, live availability, supported actions, generation parameters, reasoning tiers, and reasoning-budget mappings. Startup refresh syncs against the current supported Google Gemini endpoint model list, marks stale IDs unavailable, and checks each supported candidate with Vertex `countTokens`. Passing candidates are enabled for your project/location; hard failures such as `404`, `403`, `401`, and `400` are disabled. Transient failures such as `429`, `5xx`, or timeout keep the previous catalog state.
 
 ## Logs
 

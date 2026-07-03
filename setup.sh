@@ -396,7 +396,32 @@ is_placeholder_project() {
 
 catalog_models() {
   if [ -f "$MODEL_CATALOG_PATH" ]; then
-    awk -F'"' '/"id"[[:space:]]*:/ {print $4}' "$MODEL_CATALOG_PATH" | paste -sd, -
+    awk -F'"' '
+      function emit() {
+        if (id != "" && enabled && available && id ~ /^gemini-/ && id !~ /(embedding|tts|image|live)/) {
+          if (out != "") {
+            out = out ","
+          }
+          out = out id
+        }
+      }
+      /"id"[[:space:]]*:/ {
+        emit()
+        id = $4
+        enabled = 0
+        available = 0
+      }
+      /"enabled"[[:space:]]*:[[:space:]]*true/ {
+        enabled = 1
+      }
+      /"available"[[:space:]]*:[[:space:]]*true/ {
+        available = 1
+      }
+      END {
+        emit()
+        print out
+      }
+    ' "$MODEL_CATALOG_PATH"
     return
   fi
   printf '%s' "$ALLOWED_MODELS"
@@ -485,6 +510,10 @@ choose_model() {
   if [ -n "$VERIFY_MODEL" ]; then
     printf '%s' "$VERIFY_MODEL"
     return
+  fi
+
+  if [ -z "$ALLOWED_MODELS" ]; then
+    ALLOWED_MODELS="$(catalog_models)"
   fi
 
   local models=()

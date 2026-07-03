@@ -23,25 +23,92 @@ It is built for explicit model selection, service API keys, production service-a
 
 ## Quick Start
 
-Interactive local setup:
+Clone the repo first:
+
+```bash
+git clone https://github.com/trfhgx/vertex-gemini-openai-gateway.git
+cd vertex-gemini-openai-gateway
+```
+
+Prerequisites:
+
+- Go 1.22 or newer. Install this yourself before running the gateway.
+- A Google Cloud project with Vertex AI access.
+- Google Cloud CLI (`gcloud`). Interactive setup can install it for you when it is missing.
+- Docker. Optional, only needed for the Docker path.
+- `make`. Optional; macOS/Linux often have it or can install it easily, Windows usually does not.
+
+### macOS and Linux
+
+The setup scripts use Bash. Use either the `make` commands or the direct script commands.
+
+With `make`:
 
 ```bash
 make setup
-```
-
-Production service-account setup:
-
-```bash
-make setup production
-```
-
-Run the gateway:
-
-```bash
 make run
 ```
 
-Call it:
+Production service-account setup with `make`:
+
+```bash
+make setup production PROJECT=your-gcp-project MODEL=gemini-2.5-flash
+```
+
+Without `make`:
+
+```bash
+./setup.sh
+go run ./cmd/gateway
+./scripts/setup-production.sh --project your-gcp-project --model gemini-2.5-flash
+```
+
+### Windows
+
+Use PowerShell for Go commands. Use Git Bash or WSL for setup because the setup scripts are Bash scripts. `make` is not required.
+
+Clone:
+
+```powershell
+git clone https://github.com/trfhgx/vertex-gemini-openai-gateway.git
+cd vertex-gemini-openai-gateway
+```
+
+Run setup from Git Bash or WSL:
+
+```bash
+./setup.sh
+```
+
+Production service-account setup from Git Bash or WSL:
+
+```bash
+./scripts/setup-production.sh --project your-gcp-project --model gemini-2.5-flash
+```
+
+Then run from PowerShell, Git Bash, or WSL:
+
+```powershell
+go run ./cmd/gateway
+```
+
+### Docker
+
+On any platform with Docker:
+
+```bash
+docker compose up --build
+```
+
+### Call It
+
+List available models:
+
+```bash
+curl -s http://localhost:8080/v1/models
+```
+
+Send a chat request:
 
 ```bash
 curl -s http://localhost:8080/v1/chat/completions \
@@ -50,13 +117,7 @@ curl -s http://localhost:8080/v1/chat/completions \
   -d '{
     "model": "gemini-2.5-flash",
     "messages": [{ "role": "user", "content": "Reply with only: ok" }]
-  }' | jq
-```
-
-Docker:
-
-```bash
-docker compose up --build
+  }'
 ```
 
 ---
@@ -70,7 +131,7 @@ docker compose up --build
 - Vertex cache endpoints under `/v1/caches`
 - API-key gateway auth
 - Durable service-account auth for production
-- Startup model-catalog refresh from Vertex
+- Startup model-catalog refresh with Vertex `countTokens` availability checks
 - JSONL access/request logs with token usage, traffic type, reasoning tokens, and upstream status
 
 Full API docs: [docs/API.md](docs/API.md)
@@ -83,7 +144,7 @@ Detailed setup docs: [docs/SETUP_DETAIL.md](docs/SETUP_DETAIL.md)
 
 There is no default model. If `model` is missing or empty, Byto returns `400`.
 
-Allowed models come from [config/models.json](config/models.json), aliases, or `ALLOW_ANY_GEMINI_MODEL=true`.
+Allowed models come from [config/models.json](config/models.json), aliases, or `ALLOW_ANY_GEMINI_MODEL=true`. Startup refresh syncs the catalog against the current supported Google Gemini endpoint model list, then checks each candidate with Vertex `countTokens`. Models that pass are enabled for your project/location; hard failures like `404`/`403` stay disabled.
 
 ---
 

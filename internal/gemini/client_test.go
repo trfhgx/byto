@@ -94,6 +94,36 @@ func TestGenerateContentSendsPriorityHeaders(t *testing.T) {
 	}
 }
 
+func TestCountTokensUsesModelScopedEndpoint(t *testing.T) {
+	var got map[string]any
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/projects/p/locations/global/publishers/google/models/gemini-test:countTokens" {
+			t.Fatalf("path %s", r.URL.Path)
+		}
+		if gotAuth := r.Header.Get("Authorization"); gotAuth != "Bearer tok" {
+			t.Fatalf("authorization %q", gotAuth)
+		}
+		if gotProject := r.Header.Get("X-Goog-User-Project"); gotProject != "p" {
+			t.Fatalf("user project %q", gotProject)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"totalTokens":1}`))
+	}))
+	defer ts.Close()
+
+	c := NewTestClient(ts.URL, time.Second, staticToken("tok"), "p", "global")
+	err := c.CountTokens(context.Background(), "gemini-test", GenerateRequest{Contents: []Content{{Role: "user", Parts: []Part{{Text: "ok"}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got["contents"]; !ok {
+		t.Fatalf("missing contents in %#v", got)
+	}
+}
+
 func TestGenerateContentDoesNotRetryBadRequest(t *testing.T) {
 	attempts := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

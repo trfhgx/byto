@@ -51,6 +51,20 @@ type LiveModel struct {
 	SupportedActions []string
 }
 
+func SupportedGoogleGeminiModels() []LiveModel {
+	return []LiveModel{
+		{ID: "gemini-2.5-flash", DisplayName: "Gemini 2.5 Flash", Publisher: "google", LaunchStage: "GA"},
+		{ID: "gemini-2.5-flash-lite", DisplayName: "Gemini 2.5 Flash-Lite", Publisher: "google", LaunchStage: "GA"},
+		{ID: "gemini-2.5-flash-lite-preview-09-2025", DisplayName: "Gemini 2.5 Flash-Lite Preview", Publisher: "google", LaunchStage: "PUBLIC_PREVIEW"},
+		{ID: "gemini-2.5-flash-preview-09-2025", DisplayName: "Gemini 2.5 Flash Preview", Publisher: "google", LaunchStage: "PUBLIC_PREVIEW"},
+		{ID: "gemini-2.5-pro", DisplayName: "Gemini 2.5 Pro", Publisher: "google", LaunchStage: "GA"},
+		{ID: "gemini-3-flash-preview", DisplayName: "Gemini 3 Flash Preview", Publisher: "google", LaunchStage: "PUBLIC_PREVIEW"},
+		{ID: "gemini-3.1-flash-lite", DisplayName: "Gemini 3.1 Flash-Lite", Publisher: "google", LaunchStage: "GA"},
+		{ID: "gemini-3.1-pro-preview", DisplayName: "Gemini 3.1 Pro Preview", Publisher: "google", LaunchStage: "PUBLIC_PREVIEW"},
+		{ID: "gemini-3.5-flash", DisplayName: "Gemini 3.5 Flash", Publisher: "google", LaunchStage: "GA"},
+	}
+}
+
 func Load(path string) (Catalog, error) {
 	var c Catalog
 	b, err := os.ReadFile(path)
@@ -92,10 +106,10 @@ func (c Catalog) EnabledAvailableIDs() []string {
 	return out
 }
 
-func (c *Catalog) MergeLive(live []LiveModel) {
+func (c *Catalog) MergeSupported(models []LiveModel) {
 	now := time.Now().UTC()
 	seen := map[string]LiveModel{}
-	for _, m := range live {
+	for _, m := range models {
 		id := strings.TrimSpace(m.ID)
 		if id == "" || !strings.HasPrefix(id, "gemini-") {
 			continue
@@ -114,7 +128,6 @@ func (c *Catalog) MergeLive(live []LiveModel) {
 
 	for id, liveModel := range seen {
 		if i, ok := index[id]; ok {
-			c.Models[i].Available = true
 			c.Models[i].DisplayName = firstNonEmpty(liveModel.DisplayName, c.Models[i].DisplayName)
 			c.Models[i].Publisher = firstNonEmpty(liveModel.Publisher, c.Models[i].Publisher, "google")
 			c.Models[i].LaunchStage = liveModel.LaunchStage
@@ -129,15 +142,15 @@ func (c *Catalog) MergeLive(live []LiveModel) {
 			Publisher:        firstNonEmpty(liveModel.Publisher, "google"),
 			Family:           inferFamily(id),
 			Enabled:          false,
-			Available:        true,
+			Available:        false,
 			LaunchStage:      liveModel.LaunchStage,
 			VersionState:     liveModel.VersionState,
 			SupportedActions: liveModel.SupportedActions,
-			Notes:            "Discovered from Vertex live catalog. Review capabilities before enabling.",
+			Notes:            "Discovered from the supported Google Gemini endpoint model list. Run live verification before enabling.",
 			LastSeenAt:       &now,
 		})
 	}
-	c.Source = "vertex-live-refresh"
+	c.Source = "google-supported-gemini-models"
 }
 
 func firstNonEmpty(values ...string) string {
