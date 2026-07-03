@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -30,6 +31,14 @@ type fakeReasoningGemini struct {
 	wantBudget      int
 	wantInclude     *bool
 	wantTrafficType string
+}
+type blockingGemini struct {
+	fakeGemini
+	started chan struct{}
+	unblock chan struct{}
+	mu      sync.Mutex
+	current int
+	maxSeen int
 }
 
 func (f fakeGemini) GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error) {
@@ -58,6 +67,32 @@ func (f fakeReasoningGemini) GenerateContent(ctx context.Context, model string, 
 		Candidates:    []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "ok"}}}, FinishReason: "STOP"}},
 		UsageMetadata: gemini.UsageMetadata{PromptTokenCount: 3, CandidatesTokenCount: 2, TotalTokenCount: 10, ThoughtsTokenCount: 5, TrafficType: trafficType},
 	}, nil
+}
+func (f *blockingGemini) GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error) {
+	f.mu.Lock()
+	f.current++
+	if f.current > f.maxSeen {
+		f.maxSeen = f.current
+	}
+	f.mu.Unlock()
+	f.started <- struct{}{}
+	select {
+	case <-ctx.Done():
+		f.mu.Lock()
+		f.current--
+		f.mu.Unlock()
+		return gemini.GenerateResponse{}, ctx.Err()
+	case <-f.unblock:
+		f.mu.Lock()
+		f.current--
+		f.mu.Unlock()
+		return gemini.GenerateResponse{Candidates: []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "ok"}}}, FinishReason: "STOP"}}}, nil
+	}
+}
+func (f *blockingGemini) maxConcurrent() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.maxSeen
 }
 func (f fakeGemini) StreamGenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions, onChunk func(gemini.GenerateResponse) error) error {
 	return onChunk(gemini.GenerateResponse{Candidates: []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "hello"}}}}}, UsageMetadata: gemini.UsageMetadata{TrafficType: "ON_DEMAND_PRIORITY"}})
@@ -229,6 +264,70 @@ func TestChatCompletionPreservesResourceExhaustedStatus(t *testing.T) {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("log missing %s:\n%s", want, logs)
 		}
+	}
+}
+
+func TestAdaptiveConcurrencyLimitsPerModel(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/requests.jsonl"
+	logger := testLogger(t, path)
+	gem := &blockingGemini{started: make(chan struct{}, 2), unblock: make(chan struct{})}
+	cfg := config.Config{
+		Project:                    "p",
+		Location:                   "global",
+		AllowedModels:              []string{"gemini-3.1-pro-preview"},
+		ModelAliases:               map[string]string{},
+		GatewayAPIKeys:             []string{"k"},
+		VertexBaseURL:              "http://vertex",
+		LogPath:                    path,
+		LogMaxBytes:                1024 * 1024,
+		RequestTimeoutSeconds:      5,
+		AdaptiveConcurrencyEnabled: true,
+		AdaptiveConcurrencyMin:     1,
+		AdaptiveConcurrencyInitial: 1,
+		AdaptiveConcurrencyMax:     1,
+	}
+	s := New(cfg, gem, logger)
+	handler := s.Routes()
+	body := `{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`
+
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer k")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		firstDone <- w
+	}()
+	<-gem.started
+
+	secondDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer k")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		secondDone <- w
+	}()
+
+	select {
+	case <-gem.started:
+		t.Fatal("second request entered upstream before the first released its permit")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(gem.unblock)
+	for _, done := range []chan *httptest.ResponseRecorder{firstDone, secondDone} {
+		w := <-done
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d body %s", w.Code, w.Body.String())
+		}
+		if w.Header().Get("X-Byto-Model-Concurrency-Limit") != "1" {
+			t.Fatalf("missing concurrency header: %#v", w.Header())
+		}
+	}
+	if got := gem.maxConcurrent(); got != 1 {
+		t.Fatalf("max concurrent upstream calls %d, want 1", got)
 	}
 }
 

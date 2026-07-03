@@ -17,7 +17,7 @@ Byto is a Go gateway that turns your own Vertex AI Gemini access into an OpenAI-
 your apps -> Byto -> Vertex AI Gemini
 ```
 
-It is built for explicit model selection, service API keys, production service-account auth, priority PayGo headers, reasoning controls, JSONL logs, and Docker/server deployments.
+It is built for explicit model selection, service API keys, production service-account auth, priority PayGo headers, reasoning controls, adaptive per-model concurrency, JSONL logs, and Docker/server deployments.
 
 ---
 
@@ -141,6 +141,7 @@ curl -s http://localhost:8080/v1/chat/completions \
 - API-key gateway auth
 - Durable service-account auth for production
 - Startup model-catalog refresh with Vertex `countTokens` availability checks
+- Adaptive per-model concurrency plus exponential backoff for Vertex resource exhaustion
 - JSONL access/request logs with token usage, traffic type, reasoning tokens, and upstream status
 
 Full API docs: [docs/API.md](docs/API.md)

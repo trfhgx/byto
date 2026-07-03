@@ -430,14 +430,38 @@ Errors use this shape:
 | `500` | `server_error` | Server cannot stream the response. |
 | `502` | `vertex_error` | Vertex returned an error or could not be reached. |
 
+## Adaptive Concurrency
+
+Byto can limit concurrent chat requests per resolved Vertex model and adjust that limit from recent outcomes.
+
+The limiter starts at `ADAPTIVE_CONCURRENCY_INITIAL`, allows only that many in-flight requests for the model, increases slowly after clean completions, and reduces quickly when Vertex returns resource exhaustion. Requests that arrive while the model is already at its current limit wait under the normal request timeout.
+
+Response headers on admitted chat requests:
+
+| Header | Description |
+| --- | --- |
+| `X-Byto-Queue-Wait-Ms` | Time spent waiting for an adaptive concurrency slot. |
+| `X-Byto-Model-In-Flight` | In-flight count for the model after this request was admitted. |
+| `X-Byto-Model-Concurrency-Limit` | Current concurrency limit for the model when admitted. |
+
+Settings:
+
+| Environment | Default | Description |
+| --- | --- | --- |
+| `ADAPTIVE_CONCURRENCY_ENABLED` | `true` | Enable per-model adaptive concurrency. |
+| `ADAPTIVE_CONCURRENCY_MIN` | `1` | Lowest learned concurrency limit. |
+| `ADAPTIVE_CONCURRENCY_INITIAL` | `4` | Starting concurrency limit per model. |
+| `ADAPTIVE_CONCURRENCY_MAX` | `32` | Highest learned concurrency limit. |
+
 ## Retries
 
-Byto retries only transient Vertex transport/upstream failures. This keeps retry behavior in the gateway while product and business decisions stay in the calling apps.
+Byto retries transient Vertex transport/upstream failures and Vertex resource exhaustion using exponential backoff with jitter. This keeps retry behavior in the gateway while product and business decisions stay in the calling apps.
 
 Retried by default:
 
 - network/request errors before a response is returned
 - `408`
+- `429`
 - `500`
 - `502`
 - `503`
@@ -447,7 +471,6 @@ Not retried:
 
 - `400` invalid request/model/parameters
 - `401` or `403` auth and permission errors
-- `429` resource exhaustion/capacity contention
 - model safety/content responses returned as successful Vertex responses
 - response parsing errors after a streaming response has already started
 

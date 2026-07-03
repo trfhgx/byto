@@ -43,6 +43,7 @@ type Server struct {
 	apiKeys      map[string]struct{}
 	catalogMu    sync.RWMutex
 	modelCatalog map[string]catalog.Model
+	limiters     *adaptiveLimiters
 }
 
 func New(cfg config.Config, gem GeminiClient, logger *gwlog.JSONLLogger) *Server {
@@ -50,7 +51,7 @@ func New(cfg config.Config, gem GeminiClient, logger *gwlog.JSONLLogger) *Server
 	for _, k := range cfg.GatewayAPIKeys {
 		keys[k] = struct{}{}
 	}
-	s := &Server{cfg: cfg, resolver: config.NewModelResolver(cfg), gemini: gem, logger: logger, apiKeys: keys, modelCatalog: map[string]catalog.Model{}}
+	s := &Server{cfg: cfg, resolver: config.NewModelResolver(cfg), gemini: gem, logger: logger, apiKeys: keys, modelCatalog: map[string]catalog.Model{}, limiters: newAdaptiveLimiters(cfg)}
 	if cfg.ModelCatalogPath != "" {
 		if c, err := catalog.Load(cfg.ModelCatalogPath); err == nil {
 			s.setModelCatalog(c)
@@ -343,11 +344,29 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout())
 	defer cancel()
+	permit, err := s.limiters.acquire(ctx, model)
+	if err != nil {
+		logEntry.Status = http.StatusTooManyRequests
+		logEntry.Error = err.Error()
+		writeError(w, http.StatusTooManyRequests, "model is busy; retry later", "server_overloaded")
+		return
+	}
+	if permit.Limit > 0 {
+		w.Header().Set("X-Byto-Queue-Wait-Ms", fmt.Sprint(permit.Wait.Milliseconds()))
+		w.Header().Set("X-Byto-Model-In-Flight", fmt.Sprint(permit.InFlight))
+		w.Header().Set("X-Byto-Model-Concurrency-Limit", fmt.Sprint(permit.Limit))
+		logEntry.QueueWaitMS = permit.Wait.Milliseconds()
+		logEntry.ModelInFlight = permit.InFlight
+		logEntry.ModelConcurrencyLimit = permit.Limit
+	}
+	var upstreamErr error
+	defer func() { permit.release(upstreamErr) }()
 	if req.Stream {
-		s.stream(ctx, w, model, reqID, greq, requestOpts, &logEntry, start)
+		upstreamErr = s.stream(ctx, w, model, reqID, greq, requestOpts, &logEntry, start)
 		return
 	}
 	gresp, err := s.gemini.GenerateContent(ctx, model, greq, requestOpts)
+	upstreamErr = err
 	logEntry.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
 		logEntry.Status = vertexGatewayStatus(err)
@@ -375,12 +394,12 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID string, greq gemini.GenerateRequest, opts gemini.RequestOptions, logEntry *gwlog.RequestLog, start time.Time) {
+func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID string, greq gemini.GenerateRequest, opts gemini.RequestOptions, logEntry *gwlog.RequestLog, start time.Time) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		logEntry.Status = http.StatusInternalServerError
 		writeError(w, http.StatusInternalServerError, "streaming unsupported", "server_error")
-		return
+		return errors.New("streaming unsupported")
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -414,12 +433,13 @@ func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID
 		logEntry.Error = err.Error()
 		setUpstreamLog(logEntry, err)
 		log.Printf("stream error request_id=%s err=%v", reqID, err)
-		return
+		return err
 	}
 	finish := "stop"
 	sendSSE(w, openai.StreamChunk{ID: "chatcmpl-" + reqID, Object: "chat.completion.chunk", Created: created, Model: model, Choices: []openai.StreamChoice{{Index: 0, Delta: openai.StreamDelta{}, FinishReason: &finish}}})
 	fmt.Fprint(w, "data: [DONE]\n\n")
 	flusher.Flush()
+	return nil
 }
 
 func sendSSE(w http.ResponseWriter, v any) {

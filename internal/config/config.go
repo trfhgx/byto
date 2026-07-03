@@ -27,6 +27,10 @@ type Config struct {
 	VertexRetryMaxAttempts      int               `json:"vertex_retry_max_attempts"`
 	VertexRetryInitialMS        int               `json:"vertex_retry_initial_ms"`
 	VertexRetryMaxMS            int               `json:"vertex_retry_max_ms"`
+	AdaptiveConcurrencyEnabled  bool              `json:"adaptive_concurrency_enabled"`
+	AdaptiveConcurrencyMin      int               `json:"adaptive_concurrency_min"`
+	AdaptiveConcurrencyInitial  int               `json:"adaptive_concurrency_initial"`
+	AdaptiveConcurrencyMax      int               `json:"adaptive_concurrency_max"`
 }
 
 func Load() (Config, error) {
@@ -88,6 +92,10 @@ func defaults() Config {
 		VertexRetryMaxAttempts:     3,
 		VertexRetryInitialMS:       250,
 		VertexRetryMaxMS:           2000,
+		AdaptiveConcurrencyEnabled: true,
+		AdaptiveConcurrencyMin:     1,
+		AdaptiveConcurrencyInitial: 4,
+		AdaptiveConcurrencyMax:     32,
 	}
 }
 
@@ -150,6 +158,24 @@ func overrideFromEnv(c *Config) {
 			c.VertexRetryMaxMS = n
 		}
 	}
+	if v := os.Getenv("ADAPTIVE_CONCURRENCY_ENABLED"); v != "" {
+		c.AdaptiveConcurrencyEnabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("ADAPTIVE_CONCURRENCY_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.AdaptiveConcurrencyMin = n
+		}
+	}
+	if v := os.Getenv("ADAPTIVE_CONCURRENCY_INITIAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.AdaptiveConcurrencyInitial = n
+		}
+	}
+	if v := os.Getenv("ADAPTIVE_CONCURRENCY_MAX"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.AdaptiveConcurrencyMax = n
+		}
+	}
 }
 
 func (c Config) Validate() error {
@@ -179,6 +205,23 @@ func (c Config) Validate() error {
 	}
 	if c.VertexRetryMaxMS <= 0 {
 		return errors.New("VERTEX_RETRY_MAX_MS must be positive")
+	}
+	if c.AdaptiveConcurrencyEnabled {
+		if c.AdaptiveConcurrencyMin <= 0 {
+			return errors.New("ADAPTIVE_CONCURRENCY_MIN must be positive")
+		}
+		if c.AdaptiveConcurrencyInitial <= 0 {
+			return errors.New("ADAPTIVE_CONCURRENCY_INITIAL must be positive")
+		}
+		if c.AdaptiveConcurrencyMax <= 0 {
+			return errors.New("ADAPTIVE_CONCURRENCY_MAX must be positive")
+		}
+		if c.AdaptiveConcurrencyMin > c.AdaptiveConcurrencyInitial {
+			return errors.New("ADAPTIVE_CONCURRENCY_MIN must be less than or equal to ADAPTIVE_CONCURRENCY_INITIAL")
+		}
+		if c.AdaptiveConcurrencyInitial > c.AdaptiveConcurrencyMax {
+			return errors.New("ADAPTIVE_CONCURRENCY_INITIAL must be less than or equal to ADAPTIVE_CONCURRENCY_MAX")
+		}
 	}
 	return nil
 }

@@ -23,27 +23,30 @@ type AccessLog struct {
 }
 
 type RequestLog struct {
-	Timestamp         time.Time `json:"timestamp"`
-	Event             string    `json:"event"`
-	RequestID         string    `json:"request_id"`
-	AppID             string    `json:"app_id,omitempty"`
-	Model             string    `json:"model"`
-	VertexModel       string    `json:"vertex_model"`
-	Stream            bool      `json:"stream"`
-	ServiceTier       string    `json:"service_tier,omitempty"`
-	ReasoningEffort   string    `json:"reasoning_effort,omitempty"`
-	TrafficType       string    `json:"traffic_type,omitempty"`
-	Status            int       `json:"status"`
-	LatencyMS         int64     `json:"latency_ms"`
-	UpstreamOperation string    `json:"upstream_operation,omitempty"`
-	UpstreamStatus    int       `json:"upstream_status,omitempty"`
-	UpstreamClass     string    `json:"upstream_classification,omitempty"`
-	PromptTokens      int       `json:"prompt_tokens,omitempty"`
-	CompletionTokens  int       `json:"completion_tokens,omitempty"`
-	TotalTokens       int       `json:"total_tokens,omitempty"`
-	CachedTokens      int       `json:"cached_tokens,omitempty"`
-	ThoughtsTokens    int       `json:"thoughts_tokens,omitempty"`
-	Error             string    `json:"error,omitempty"`
+	Timestamp             time.Time `json:"timestamp"`
+	Event                 string    `json:"event"`
+	RequestID             string    `json:"request_id"`
+	AppID                 string    `json:"app_id,omitempty"`
+	Model                 string    `json:"model"`
+	VertexModel           string    `json:"vertex_model"`
+	Stream                bool      `json:"stream"`
+	ServiceTier           string    `json:"service_tier,omitempty"`
+	ReasoningEffort       string    `json:"reasoning_effort,omitempty"`
+	TrafficType           string    `json:"traffic_type,omitempty"`
+	Status                int       `json:"status"`
+	LatencyMS             int64     `json:"latency_ms"`
+	QueueWaitMS           int64     `json:"queue_wait_ms,omitempty"`
+	ModelInFlight         int       `json:"model_in_flight,omitempty"`
+	ModelConcurrencyLimit int       `json:"model_concurrency_limit,omitempty"`
+	UpstreamOperation     string    `json:"upstream_operation,omitempty"`
+	UpstreamStatus        int       `json:"upstream_status,omitempty"`
+	UpstreamClass         string    `json:"upstream_classification,omitempty"`
+	PromptTokens          int       `json:"prompt_tokens,omitempty"`
+	CompletionTokens      int       `json:"completion_tokens,omitempty"`
+	TotalTokens           int       `json:"total_tokens,omitempty"`
+	CachedTokens          int       `json:"cached_tokens,omitempty"`
+	ThoughtsTokens        int       `json:"thoughts_tokens,omitempty"`
+	Error                 string    `json:"error,omitempty"`
 }
 
 type JSONLLogger struct {
