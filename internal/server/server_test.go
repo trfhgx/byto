@@ -84,12 +84,23 @@ func (f fakeGemini) DeleteCachedContent(ctx context.Context, id string) (json.Ra
 func testServer(t *testing.T) *Server {
 	t.Helper()
 	path := t.TempDir() + "/requests.jsonl"
+	logger := testLogger(t, path)
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, RequestTimeoutSeconds: 5}
+	return New(cfg, fakeGemini{}, logger)
+}
+
+func testLogger(t *testing.T, path string) *gwlog.JSONLLogger {
+	t.Helper()
 	logger, err := gwlog.New(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, RequestTimeoutSeconds: 5}
-	return New(cfg, fakeGemini{}, logger)
+	t.Cleanup(func() {
+		if err := logger.Close(); err != nil {
+			t.Errorf("close logger: %v", err)
+		}
+	})
+	return logger
 }
 
 func TestChatCompletion(t *testing.T) {
@@ -155,10 +166,7 @@ func TestChatCompletionMapsReasoningEffort(t *testing.T) {
 	if err := os.WriteFile(catalogPath, b, 0644); err != nil {
 		t.Fatal(err)
 	}
-	logger, err := gwlog.New(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger := testLogger(t, logPath)
 	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-reasoning"}, ModelCatalogPath: catalogPath, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: logPath, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5}
 	s := New(cfg, fakeReasoningGemini{t: t, wantBudget: 2048}, logger)
 
@@ -184,10 +192,7 @@ func TestChatCompletionMapsReasoningEffort(t *testing.T) {
 func TestChatCompletionSupportsExplicitThinkingBudget(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/requests.jsonl"
-	logger, err := gwlog.New(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger := testLogger(t, path)
 	includeThoughts := true
 	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5}
 	s := New(cfg, fakeReasoningGemini{t: t, wantBudget: 777, wantInclude: &includeThoughts}, logger)
@@ -204,10 +209,7 @@ func TestChatCompletionSupportsExplicitThinkingBudget(t *testing.T) {
 func TestChatCompletionPreservesResourceExhaustedStatus(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/requests.jsonl"
-	logger, err := gwlog.New(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger := testLogger(t, path)
 	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5}
 	s := New(cfg, fakeResourceExhaustedGemini{}, logger)
 
@@ -253,10 +255,7 @@ func TestModelsListAllowsUnauthenticated(t *testing.T) {
 func TestAccessLogsHealthModelsAndAuthFailure(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/requests.jsonl"
-	logger, err := gwlog.New(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger := testLogger(t, path)
 	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5}
 	s := New(cfg, fakeGemini{}, logger)
 
@@ -347,10 +346,7 @@ func TestModelMetadataIncludesSupportedParameters(t *testing.T) {
 	if err := os.WriteFile(catalogPath, b, 0644); err != nil {
 		t.Fatal(err)
 	}
-	logger, err := gwlog.New(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger := testLogger(t, logPath)
 	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-test"}, ModelCatalogPath: catalogPath, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: logPath, RequestTimeoutSeconds: 5}
 	s := New(cfg, fakeGemini{}, logger)
 
@@ -404,10 +400,7 @@ func TestRefreshModelCatalogVerifiesCandidates(t *testing.T) {
 	if err := os.WriteFile(catalogPath, b, 0644); err != nil {
 		t.Fatal(err)
 	}
-	logger, err := gwlog.New(logPath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger := testLogger(t, logPath)
 	cfg := config.Config{Project: "p", Location: "global", ModelCatalogPath: catalogPath, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: logPath, RequestTimeoutSeconds: 5}
 	s := New(cfg, fakeCatalogVerifier{results: map[string]error{
 		"gemini-2.5-pro":   &gemini.VertexError{Operation: "countTokens", Status: http.StatusNotFound, Body: `{"error":{"status":"NOT_FOUND"}}`},
@@ -438,7 +431,7 @@ func TestRefreshModelCatalogVerifiesCandidates(t *testing.T) {
 func TestPersistentLog(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/requests.jsonl"
-	logger, _ := gwlog.New(path)
+	logger := testLogger(t, path)
 	logger.Write(gwlog.RequestLog{Timestamp: time.Now(), RequestID: "abc", Model: "gemini-3.1-pro-preview", Status: 200})
 	b, err := os.ReadFile(path)
 	if err != nil {

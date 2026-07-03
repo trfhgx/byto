@@ -53,6 +53,11 @@ func TestGatewayAgainstFakeVertex(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		if err := logger.Close(); err != nil {
+			t.Errorf("close logger: %v", err)
+		}
+	})
 	gc := gemini.NewTestClient(fakeVertex.URL, 10*time.Second, staticToken{}, cfg.Project, cfg.Location)
 	srv := httptest.NewServer(server.New(cfg, gc, logger).Routes())
 	defer srv.Close()

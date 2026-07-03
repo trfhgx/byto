@@ -82,6 +82,20 @@ func (l *JSONLLogger) Write(entry RequestLog) {
 	l.write(entry)
 }
 
+func (l *JSONLLogger) Close() error {
+	if l == nil {
+		return nil
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.file == nil {
+		return nil
+	}
+	err := l.file.Close()
+	l.file = nil
+	return err
+}
+
 func (l *JSONLLogger) write(entry any) {
 	if l == nil {
 		return
