@@ -112,7 +112,7 @@ ifneq ($(filter 1 true yes,$(NON_INTERACTIVE)),)
 CLOUD_SETUP_ARGS += --non-interactive
 endif
 
-.PHONY: help setup setup-production production setup-cloud cloud switch run build test test-race test-live clean fmt verify-gcp
+.PHONY: help setup setup-production production setup-cloud cloud switch version-check run build test test-race test-live clean fmt verify-gcp
 
 help:
 	@echo "Byto Gateway"
@@ -157,10 +157,13 @@ cloud:
 switch:
 	@./scripts/switch-auth.sh $(SWITCH_ARGS)
 
-run:
+version-check:
+	@./scripts/version-check.sh
+
+run: version-check
 	go run ./cmd/gateway
 
-build:
+build: version-check
 	mkdir -p $(BIN_DIR)
 	mkdir -p $(GO_BUILD_CACHE)
 	GOCACHE="$(GO_BUILD_CACHE)" go build -trimpath -ldflags="-s -w" -o $(BIN_DIR)/$(APP_NAME) ./cmd/gateway

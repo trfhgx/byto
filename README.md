@@ -65,7 +65,9 @@ go run ./cmd/gateway
 
 ### Windows
 
-Use PowerShell for Go commands. Use Git Bash or WSL for setup because the setup scripts are Bash scripts. `make` is not required.
+Use PowerShell for Go commands. The Bash setup scripts do not run directly in
+PowerShell, so the easiest Windows paths are Docker Desktop or WSL. `make` is
+not required.
 
 Clone:
 
@@ -74,19 +76,19 @@ git clone https://github.com/trfhgx/vertex-gemini-openai-gateway.git
 cd vertex-gemini-openai-gateway
 ```
 
-Run setup from Git Bash or WSL:
+Run setup from WSL:
 
 ```bash
 ./setup.sh
 ```
 
-Production service-account setup from Git Bash or WSL:
+Production service-account setup from WSL:
 
 ```bash
 ./scripts/setup-production.sh --project your-gcp-project --model gemini-2.5-flash
 ```
 
-Then run from PowerShell, Git Bash, or WSL:
+Then run from PowerShell or WSL:
 
 ```powershell
 go run ./cmd/gateway

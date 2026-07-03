@@ -1,0 +1,9 @@
+{
+  "latest": "0.1.0",
+  "deprecated_below": "0.1.0",
+  "obsolete_below": "0.1.0",
+  "deprecated": [],
+  "obsolete": [],
+  "message": "A newer Byto Gateway version is available.",
+  "update_command": "git pull --ff-only origin main"
+}
