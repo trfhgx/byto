@@ -104,6 +104,68 @@ function Add-CommonGoPath {
   }
 }
 
+function Test-IsAdmin {
+  $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+  $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+  return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Add-CommonChocolateyPath {
+  $paths = @(
+    "$env:ProgramData\chocolatey\bin",
+    "$env:ChocolateyInstall\bin"
+  )
+  foreach ($path in $paths) {
+    if ((Test-Path $path) -and (($env:Path -split ";") -notcontains $path)) {
+      $env:Path = "$path;$env:Path"
+    }
+  }
+}
+
+function Install-Chocolatey {
+  Step "Installing Chocolatey"
+  if (-not (Test-IsAdmin)) {
+    Warn "Chocolatey installation requires an elevated PowerShell window."
+    Write-Host "Open PowerShell as Administrator, then rerun this setup."
+    return $false
+  }
+  Set-ExecutionPolicy Bypass -Scope Process -Force
+  [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+  Invoke-Expression ((New-Object System.Net.WebClient).DownloadString("https://community.chocolatey.org/install.ps1"))
+  Add-CommonChocolateyPath
+  return [bool](Get-Command choco -ErrorAction SilentlyContinue)
+}
+
+function Ensure-PackageManager([bool]$AutoInstall) {
+  if (Get-Command winget -ErrorAction SilentlyContinue) {
+    return "winget"
+  }
+  Add-CommonChocolateyPath
+  if (Get-Command choco -ErrorAction SilentlyContinue) {
+    return "choco"
+  }
+
+  Warn "Neither winget nor Chocolatey is installed."
+  $choice = 1
+  if ($AutoInstall) {
+    $choice = 0
+  } elseif ($NonInteractive) {
+    $choice = 1
+  } else {
+    $choice = Select-Menu "Choose how to continue:" @("Install Chocolatey now", "Skip for now", "Abort setup") 0
+  }
+  if ($choice -eq 0) {
+    if (Install-Chocolatey) {
+      return "choco"
+    }
+    return ""
+  }
+  if ($choice -eq 2) {
+    Fail "Setup aborted before installing a package manager."
+  }
+  return ""
+}
+
 function Read-EnvFile {
   if (-not (Test-Path ".env")) {
     return
@@ -168,12 +230,13 @@ function Test-GoVersion {
 
 function Install-Go {
   Step "Installing Go"
-  if (Get-Command winget -ErrorAction SilentlyContinue) {
+  $manager = Ensure-PackageManager $InstallGo
+  if ($manager -eq "winget") {
     & winget install --id GoLang.Go --exact --source winget --accept-package-agreements --accept-source-agreements
-  } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+  } elseif ($manager -eq "choco") {
     & choco install golang -y --no-progress
   } else {
-    Warn "No supported Windows package manager found for automatic Go install."
+    Warn "No supported Windows package manager is available for automatic Go install."
     Write-Host "Install Go from https://go.dev/dl/ and open a new PowerShell window."
     return $false
   }
@@ -227,12 +290,13 @@ function Add-CommonGcloudPath {
 
 function Install-Gcloud {
   Step "Installing Google Cloud CLI"
-  if (Get-Command winget -ErrorAction SilentlyContinue) {
+  $manager = Ensure-PackageManager $InstallGcloud
+  if ($manager -eq "winget") {
     & winget install --id Google.CloudSDK --exact --source winget --accept-package-agreements --accept-source-agreements
-  } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+  } elseif ($manager -eq "choco") {
     & choco install gcloudsdk -y --no-progress
   } else {
-    Warn "No supported Windows package manager found for automatic Google Cloud CLI install."
+    Warn "No supported Windows package manager is available for automatic Google Cloud CLI install."
     Write-Host "Install it from https://cloud.google.com/sdk/docs/install-sdk#windows and open a new PowerShell window."
     return $false
   }
