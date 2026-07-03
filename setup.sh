@@ -23,6 +23,7 @@ VERTEX_RETRY_MAX_MS="${VERTEX_RETRY_MAX_MS:-2000}"
 NON_INTERACTIVE=0
 SKIP_TESTS=0
 INSTALL_GCLOUD=0
+INSTALL_GO=0
 FORCE_OPEN_AUTH=0
 FORCE_PROTECTED_AUTH=0
 SETUP_LOG_DIR="$ROOT_DIR/.cache/setup"
@@ -43,6 +44,7 @@ Make options:
   NON_INTERACTIVE=1        Do not prompt; use env/default values.
   SKIP_TESTS=1             Do not run the local Go test suite.
   INSTALL_GCLOUD=1         Install Google Cloud CLI if missing.
+  INSTALL_GO=1             Install Go if missing or too old.
   OPEN=1                   Write open gateway auth; no API key required.
   PROTECTED=1              Write protected gateway auth; API key required.
 
@@ -50,6 +52,7 @@ Examples:
   make setup
   make setup PROJECT=my-gcp-project
   make setup PROJECT=my-gcp-project INSTALL_GCLOUD=1
+  make setup PROJECT=my-gcp-project INSTALL_GO=1
   make setup PROJECT=my-gcp-project NON_INTERACTIVE=1
   make setup PROJECT=my-gcp-project OPEN=1
   make setup PROJECT=my-gcp-project PROTECTED=1
@@ -86,6 +89,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --install-gcloud)
       INSTALL_GCLOUD=1
+      shift
+      ;;
+    --install-go)
+      INSTALL_GO=1
       shift
       ;;
     --open)
@@ -837,17 +844,111 @@ EOF_ENV
   ok "Wrote .env"
 }
 
-check_go() {
-  if ! command -v go >/dev/null 2>&1; then
-    fail "Go 1.22+ is required. Install Go first, then rerun make setup"
-  fi
+go_version_ok() {
+  command -v go >/dev/null 2>&1 || return 1
   local version
   version="$(go version | awk '{print $3}' | sed 's/^go//')"
   local major minor
   major="$(printf '%s' "$version" | cut -d. -f1)"
   minor="$(printf '%s' "$version" | cut -d. -f2)"
-  if [ "${major:-0}" -lt 1 ] || { [ "${major:-0}" -eq 1 ] && [ "${minor:-0}" -lt 22 ]; }; then
-    fail "Go $version found, but Go 1.22+ is required."
+  [ "${major:-0}" -gt 1 ] || { [ "${major:-0}" -eq 1 ] && [ "${minor:-0}" -ge 22 ]; }
+}
+
+install_go_macos_cmd() {
+  if command -v brew >/dev/null 2>&1; then
+    brew install go
+    return
+  fi
+  warn "Homebrew is not installed, so setup cannot install Go automatically on macOS."
+  echo "Install Go from https://go.dev/dl/ or install Homebrew, then rerun setup."
+  return 1
+}
+
+install_go_linux_cmd() {
+  if command -v apt-get >/dev/null 2>&1; then
+    sudo_cmd apt-get update
+    sudo_cmd apt-get install -y golang-go
+    return
+  fi
+  if command -v dnf >/dev/null 2>&1; then
+    sudo_cmd dnf install -y golang
+    return
+  fi
+  if command -v yum >/dev/null 2>&1; then
+    sudo_cmd yum install -y golang
+    return
+  fi
+  if command -v snap >/dev/null 2>&1; then
+    sudo_cmd snap install go --classic
+    return
+  fi
+  warn "No supported Linux package manager found for automatic Go install."
+  echo "Supported auto-install paths: apt-get, dnf, yum, or snap."
+  return 1
+}
+
+install_go() {
+  step "Installing Go"
+  case "$(uname -s)" in
+    Darwin)
+      run_quiet "Installing Go" install_go_macos_cmd || return 1
+      ;;
+    Linux)
+      ensure_sudo_session
+      run_quiet "Installing Go" install_go_linux_cmd || return 1
+      ;;
+    *)
+      warn "Automatic Go install is not supported on $(uname -s)."
+      return 1
+      ;;
+  esac
+  hash -r
+  ensure_command_on_path go \
+    "/opt/homebrew/bin/go" \
+    "/usr/local/bin/go" \
+    "/usr/local/go/bin/go" \
+    "$HOME/go/bin/go" >/dev/null 2>&1 || true
+  if go_version_ok; then
+    ok "Installed Go $(go version | awk '{print $3}')"
+    return 0
+  fi
+  warn "Go install finished, but Go 1.22+ is not on PATH yet."
+  echo "Open a new terminal or update PATH, then rerun setup."
+  return 1
+}
+
+check_go() {
+  ensure_command_on_path go \
+    "/opt/homebrew/bin/go" \
+    "/usr/local/bin/go" \
+    "/usr/local/go/bin/go" \
+    "$HOME/go/bin/go" >/dev/null 2>&1 || true
+
+  if ! go_version_ok; then
+    if command -v go >/dev/null 2>&1; then
+      warn "Go $(go version | awk '{print $3}') found, but Go 1.22+ is required."
+    else
+      warn "Go 1.22+ is not installed."
+    fi
+    local choice=1
+    if [ "$INSTALL_GO" -eq 1 ]; then
+      choice=0
+    elif [ "$NON_INTERACTIVE" -eq 1 ]; then
+      choice=1
+    else
+      choice="$(select_menu "Choose how to continue:" 0 "Install Go now" "Skip for now" "Abort setup")"
+    fi
+    if [ "$choice" -eq 0 ]; then
+      if install_go; then
+        check_go
+        return
+      fi
+      fail "Go 1.22+ is required before setup can continue."
+    fi
+    if [ "$choice" -eq 2 ]; then
+      fail "Setup aborted before installing Go."
+    fi
+    fail "Go 1.22+ is required before setup can continue."
   fi
   ok "Go $(go version | awk '{print $3}')"
 }

@@ -6,6 +6,8 @@ param(
   [switch]$Protected,
   [switch]$NonInteractive,
   [switch]$SkipTests,
+  [switch]$InstallGo,
+  [switch]$InstallGcloud,
   [switch]$Run
 )
 
@@ -88,6 +90,20 @@ function New-GatewayKey {
   return "byto_" + [Convert]::ToBase64String($bytes).TrimEnd("=").Replace("+", "-").Replace("/", "_")
 }
 
+function Add-CommonGoPath {
+  $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+  $paths = @(
+    "$env:ProgramFiles\Go\bin",
+    "$programFilesX86\Go\bin",
+    "$env:USERPROFILE\go\bin"
+  )
+  foreach ($path in $paths) {
+    if ((Test-Path $path) -and (($env:Path -split ";") -notcontains $path)) {
+      $env:Path = "$path;$env:Path"
+    }
+  }
+}
+
 function Read-EnvFile {
   if (-not (Test-Path ".env")) {
     return
@@ -136,27 +152,116 @@ VERTEX_RETRY_MAX_MS=2000
   Ok "Wrote .env"
 }
 
-function Ensure-Go {
+function Test-GoVersion {
   $go = Get-Command go -ErrorAction SilentlyContinue
   if (-not $go) {
-    Fail "Go 1.22+ is required. Install it from https://go.dev/dl/ and open a new PowerShell window."
+    return $false
   }
   $versionText = (& go version)
   if ($versionText -notmatch "go(\d+)\.(\d+)") {
-    Fail "Could not parse Go version: $versionText"
+    return $false
   }
   $major = [int]$Matches[1]
   $minor = [int]$Matches[2]
-  if ($major -lt 1 -or ($major -eq 1 -and $minor -lt 22)) {
-    Fail "$versionText found, but Go 1.22+ is required."
+  return ($major -gt 1 -or ($major -eq 1 -and $minor -ge 22))
+}
+
+function Install-Go {
+  Step "Installing Go"
+  if (Get-Command winget -ErrorAction SilentlyContinue) {
+    & winget install --id GoLang.Go --exact --source winget --accept-package-agreements --accept-source-agreements
+  } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+    & choco install golang -y --no-progress
+  } else {
+    Warn "No supported Windows package manager found for automatic Go install."
+    Write-Host "Install Go from https://go.dev/dl/ and open a new PowerShell window."
+    return $false
   }
-  Ok $versionText
+  Add-CommonGoPath
+  return (Test-GoVersion)
+}
+
+function Ensure-Go {
+  Add-CommonGoPath
+  if (-not (Test-GoVersion)) {
+    $go = Get-Command go -ErrorAction SilentlyContinue
+    if ($go) {
+      Warn "$(& go version) found, but Go 1.22+ is required."
+    } else {
+      Warn "Go 1.22+ is not installed."
+    }
+    $choice = 1
+    if ($InstallGo) {
+      $choice = 0
+    } elseif (-not $NonInteractive) {
+      $choice = Select-Menu "Choose how to continue:" @("Install Go now", "Skip for now", "Abort setup") 0
+    }
+    if ($choice -eq 0) {
+      if (Install-Go) {
+        Ensure-Go
+        return
+      }
+      Fail "Go 1.22+ is required before setup can continue."
+    }
+    if ($choice -eq 2) {
+      Fail "Setup aborted before installing Go."
+    }
+    Fail "Go 1.22+ is required before setup can continue."
+  }
+  Ok (& go version)
+}
+
+function Add-CommonGcloudPath {
+  $programFilesX86 = [Environment]::GetEnvironmentVariable("ProgramFiles(x86)")
+  $paths = @(
+    "$env:ProgramFiles\Google\Cloud SDK\google-cloud-sdk\bin",
+    "$programFilesX86\Google\Cloud SDK\google-cloud-sdk\bin",
+    "$env:LOCALAPPDATA\Google\Cloud SDK\google-cloud-sdk\bin"
+  )
+  foreach ($path in $paths) {
+    if ((Test-Path $path) -and (($env:Path -split ";") -notcontains $path)) {
+      $env:Path = "$path;$env:Path"
+    }
+  }
+}
+
+function Install-Gcloud {
+  Step "Installing Google Cloud CLI"
+  if (Get-Command winget -ErrorAction SilentlyContinue) {
+    & winget install --id Google.CloudSDK --exact --source winget --accept-package-agreements --accept-source-agreements
+  } elseif (Get-Command choco -ErrorAction SilentlyContinue) {
+    & choco install gcloudsdk -y --no-progress
+  } else {
+    Warn "No supported Windows package manager found for automatic Google Cloud CLI install."
+    Write-Host "Install it from https://cloud.google.com/sdk/docs/install-sdk#windows and open a new PowerShell window."
+    return $false
+  }
+  Add-CommonGcloudPath
+  return [bool](Get-Command gcloud -ErrorAction SilentlyContinue)
 }
 
 function Ensure-Gcloud {
+  Add-CommonGcloudPath
   $gcloud = Get-Command gcloud -ErrorAction SilentlyContinue
   if (-not $gcloud) {
     Warn "Google Cloud CLI is not installed. Install it from https://cloud.google.com/sdk/docs/install-sdk#windows for live Vertex auth."
+    $choice = 1
+    if ($InstallGcloud) {
+      $choice = 0
+    } elseif (-not $NonInteractive) {
+      $choice = Select-Menu "Choose how to continue:" @("Install Google Cloud CLI now", "Skip for now", "Abort setup") 1
+    }
+    if ($choice -eq 0) {
+      if (Install-Gcloud) {
+        return (Ensure-Gcloud)
+      }
+      Warn "Continuing without gcloud. Live Vertex setup will not work until it is installed."
+      return $false
+    }
+    if ($choice -eq 2) {
+      Fail "Setup aborted before installing gcloud."
+    }
+    Warn "Skipped Google Cloud CLI install. Live Vertex setup will not work until gcloud is installed."
     return $false
   }
   Ok "gcloud CLI found"

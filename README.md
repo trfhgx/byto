@@ -32,9 +32,9 @@ cd vertex-gemini-openai-gateway
 
 Prerequisites:
 
-- Go 1.22 or newer. Install this yourself before running the gateway.
 - A Google Cloud project with Vertex AI access.
-- Google Cloud CLI (`gcloud`). Interactive setup can install it for you when it is missing.
+- Go 1.22 or newer. Interactive setup can install it for you when a supported package manager is available.
+- Google Cloud CLI (`gcloud`). Interactive setup can install it for you when a supported package manager is available.
 - Docker. Optional, only needed for the Docker path.
 - `make`. Optional; macOS/Linux often have it or can install it easily, Windows usually does not.
 - PowerShell 7 or Windows PowerShell 5.1 on Windows.

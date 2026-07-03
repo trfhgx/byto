@@ -30,6 +30,9 @@ endif
 ifneq ($(filter 1 true yes,$(INSTALL_GCLOUD)),)
 SETUP_ARGS += --install-gcloud
 endif
+ifneq ($(filter 1 true yes,$(INSTALL_GO)),)
+SETUP_ARGS += --install-go
+endif
 ifneq ($(filter 1 true yes,$(OPEN)),)
 SETUP_ARGS += --open
 endif
