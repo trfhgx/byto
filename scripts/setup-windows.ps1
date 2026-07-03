@@ -8,6 +8,7 @@ param(
   [switch]$SkipTests,
   [switch]$InstallGo,
   [switch]$InstallGcloud,
+  [switch]$ForceInstallDependencies,
   [switch]$Run
 )
 
@@ -246,6 +247,11 @@ function Install-Go {
 
 function Ensure-Go {
   Add-CommonGoPath
+  if ($ForceInstallDependencies) {
+    if (-not (Install-Go)) {
+      Fail "Go 1.22+ is required before setup can continue."
+    }
+  }
   if (-not (Test-GoVersion)) {
     $go = Get-Command go -ErrorAction SilentlyContinue
     if ($go) {
@@ -306,6 +312,11 @@ function Install-Gcloud {
 
 function Ensure-Gcloud {
   Add-CommonGcloudPath
+  if ($ForceInstallDependencies) {
+    if (-not (Install-Gcloud)) {
+      Warn "Continuing without gcloud. Live Vertex setup will not work until it is installed."
+    }
+  }
   $gcloud = Get-Command gcloud -ErrorAction SilentlyContinue
   if (-not $gcloud) {
     Warn "Google Cloud CLI is not installed. Install it from https://cloud.google.com/sdk/docs/install-sdk#windows for live Vertex auth."

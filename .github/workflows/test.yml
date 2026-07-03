@@ -54,3 +54,77 @@ jobs:
 
       - name: Run production setup e2e
         run: test/e2e/setup_production_fake_gcloud.sh
+
+  windows-native-setup-e2e:
+    name: Windows Native Setup E2E
+    runs-on: windows-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up fake package manager
+        shell: pwsh
+        run: |
+          $fakeBin = Join-Path $env:RUNNER_TEMP "byto-fake-bin"
+          New-Item -ItemType Directory -Force -Path $fakeBin | Out-Null
+          $goPath = (Get-Command go).Source
+          $gcloudPath = Join-Path $fakeBin "gcloud.cmd"
+
+          @"
+          @echo off
+          echo fake gcloud %*
+          exit /b 0
+          "@ | Set-Content -Path $gcloudPath -Encoding ascii
+
+          @"
+          @echo off
+          echo fake winget %*>>"%RUNNER_TEMP%\byto-winget.log"
+          echo %* | findstr /C:"GoLang.Go" >nul
+          if not errorlevel 1 (
+            copy /Y "$goPath" "$fakeBin\go.exe" >nul
+            exit /b 0
+          )
+          echo %* | findstr /C:"Google.CloudSDK" >nul
+          if not errorlevel 1 (
+            exit /b 0
+          )
+          exit /b 1
+          "@ | Set-Content -Path (Join-Path $fakeBin "winget.cmd") -Encoding ascii
+
+          Add-Content $env:GITHUB_PATH $fakeBin
+          "BYTO_FAKE_BIN=$fakeBin" | Add-Content $env:GITHUB_ENV
+
+      - name: Run native Windows setup end to end
+        shell: pwsh
+        env:
+          SKIP_VERSION_CHECK: "1"
+        run: |
+          .\scripts\setup-windows.ps1 `
+            -Project byto-ci-project `
+            -Location global `
+            -Open `
+            -NonInteractive `
+            -InstallGo `
+            -InstallGcloud `
+            -ForceInstallDependencies
+
+      - name: Verify setup outputs
+        shell: pwsh
+        run: |
+          if (-not (Test-Path ".env")) {
+            throw ".env was not created"
+          }
+          $envText = Get-Content ".env" -Raw
+          if ($envText -notmatch "GOOGLE_CLOUD_PROJECT=byto-ci-project") {
+            throw ".env does not contain configured project"
+          }
+          if ($envText -notmatch "GATEWAY_ALLOW_UNAUTHENTICATED=true") {
+            throw ".env does not contain open gateway auth"
+          }
+          $wingetLog = Get-Content "$env:RUNNER_TEMP\byto-winget.log" -Raw
+          if ($wingetLog -notmatch "GoLang.Go") {
+            throw "Go install path was not exercised"
+          }
+          if ($wingetLog -notmatch "Google.CloudSDK") {
+            throw "Google Cloud CLI install path was not exercised"
+          }
