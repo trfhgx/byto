@@ -153,7 +153,9 @@ Detailed setup docs: [docs/SETUP_DETAIL.md](docs/SETUP_DETAIL.md)
 
 There is no default model. If `model` is missing or empty, Byto returns `400`.
 
-Allowed models come from [config/models.json](config/models.json), aliases, or `ALLOW_ANY_GEMINI_MODEL=true`. Startup refresh syncs the catalog against the current supported Google Gemini endpoint model list, then checks each candidate with Vertex `countTokens`. Models that pass are enabled for your project/location; hard failures like `404`/`403` stay disabled.
+Allowed models come from [config/models.json](config/models.json), aliases, or `ALLOW_ANY_GEMINI_MODEL=true`. Gemini entries use Vertex `generateContent`; entries with `runtime: "vertex_openai"` use the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint. Startup refresh syncs only the Gemini catalog candidates against the current supported Google Gemini endpoint model list, then checks each candidate with Vertex `countTokens`. Models that pass are enabled for your project/location; hard failures like `404`/`403` stay disabled.
+
+The bundled MaaS catalog includes only non-Gemini models that were live-proven to reply for this project/workstream. If a listed MaaS model is not enabled for your Google Cloud account, Byto returns a provider access error instead of trying to accept Marketplace terms or change billing/project settings.
 
 ---
 
