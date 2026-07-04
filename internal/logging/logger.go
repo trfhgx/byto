@@ -36,6 +36,8 @@ type RequestLog struct {
 	Status                int       `json:"status"`
 	LatencyMS             int64     `json:"latency_ms"`
 	QueueWaitMS           int64     `json:"queue_wait_ms,omitempty"`
+	ModelQueueDepth       int       `json:"model_queue_depth,omitempty"`
+	ModelQueueMax         int       `json:"model_queue_max,omitempty"`
 	ModelInFlight         int       `json:"model_in_flight,omitempty"`
 	ModelConcurrencyLimit int       `json:"model_concurrency_limit,omitempty"`
 	UpstreamOperation     string    `json:"upstream_operation,omitempty"`

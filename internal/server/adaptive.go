@@ -36,6 +36,7 @@ type adaptivePermit struct {
 	Limit    int
 	InFlight int
 	Queued   int
+	QueueMax int
 	once     sync.Once
 }
 
@@ -144,6 +145,7 @@ func (l *adaptiveLimiter) acquire(ctx context.Context) (*adaptivePermit, error) 
 				Limit:    l.limit,
 				InFlight: l.inFlight,
 				Queued:   l.queued,
+				QueueMax: l.queueMax,
 			}
 			l.mu.Unlock()
 			return p, nil

@@ -358,9 +358,13 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		}
 		if permit.Limit > 0 {
 			w.Header().Set("X-Byto-Queue-Wait-Ms", fmt.Sprint(permit.Wait.Milliseconds()))
+			w.Header().Set("X-Byto-Model-Queue-Depth", fmt.Sprint(permit.Queued))
+			w.Header().Set("X-Byto-Model-Queue-Max", fmt.Sprint(permit.QueueMax))
 			w.Header().Set("X-Byto-Model-In-Flight", fmt.Sprint(permit.InFlight))
 			w.Header().Set("X-Byto-Model-Concurrency-Limit", fmt.Sprint(permit.Limit))
 			logEntry.QueueWaitMS = permit.Wait.Milliseconds()
+			logEntry.ModelQueueDepth = permit.Queued
+			logEntry.ModelQueueMax = permit.QueueMax
 			logEntry.ModelInFlight = permit.InFlight
 			logEntry.ModelConcurrencyLimit = permit.Limit
 		}
@@ -379,6 +383,8 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	logEntry.Status = status
 	if logEntry.ModelConcurrencyLimit > 0 {
 		w.Header().Set("X-Byto-Queue-Wait-Ms", fmt.Sprint(logEntry.QueueWaitMS))
+		w.Header().Set("X-Byto-Model-Queue-Depth", fmt.Sprint(logEntry.ModelQueueDepth))
+		w.Header().Set("X-Byto-Model-Queue-Max", fmt.Sprint(logEntry.ModelQueueMax))
 		w.Header().Set("X-Byto-Model-In-Flight", fmt.Sprint(logEntry.ModelInFlight))
 		w.Header().Set("X-Byto-Model-Concurrency-Limit", fmt.Sprint(logEntry.ModelConcurrencyLimit))
 	}
@@ -393,6 +399,8 @@ func (s *Server) runChatCompletion(ctx context.Context, model, reqID string, req
 	}
 	if permit.Limit > 0 {
 		logEntry.QueueWaitMS = permit.Wait.Milliseconds()
+		logEntry.ModelQueueDepth = permit.Queued
+		logEntry.ModelQueueMax = permit.QueueMax
 		logEntry.ModelInFlight = permit.InFlight
 		logEntry.ModelConcurrencyLimit = permit.Limit
 	}

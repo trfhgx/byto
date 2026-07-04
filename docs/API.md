@@ -481,6 +481,8 @@ Response headers on admitted chat requests:
 | Header | Description |
 | --- | --- |
 | `X-Byto-Queue-Wait-Ms` | Time spent waiting for an adaptive concurrency slot. |
+| `X-Byto-Model-Queue-Depth` | Remaining queued requests for the model after this request was admitted. |
+| `X-Byto-Model-Queue-Max` | Configured maximum queued synchronous requests per model. |
 | `X-Byto-Model-In-Flight` | In-flight count for the model after this request was admitted. |
 | `X-Byto-Model-Concurrency-Limit` | Current concurrency limit for the model when admitted. |
 
