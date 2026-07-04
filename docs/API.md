@@ -500,36 +500,12 @@ Settings:
 | `ADAPTIVE_CONCURRENCY_MIN` | `1` | Lowest learned concurrency limit. |
 | `ADAPTIVE_CONCURRENCY_INITIAL` | `4` | Starting concurrency limit per model. |
 | `ADAPTIVE_CONCURRENCY_MAX` | `32` | Highest learned concurrency limit. |
-| `ADAPTIVE_QUEUE_MAX_DEPTH` | `2048` | Maximum queued synchronous requests per model. Set to `0` to fail immediately when all slots are busy. Size this against process memory, load balancer timeout, and the number of model workers you expect to run. |
-| `ADAPTIVE_QUEUE_MAX_WAIT_MS` | `30000` | Maximum time a synchronous request waits for a model slot. Raise this only when callers and upstream load balancers are prepared to keep HTTP requests open. |
+| `ADAPTIVE_QUEUE_MAX_DEPTH` | `2048` | Maximum queued synchronous requests per model. Set to `0` to fail immediately when all slots are busy. |
+| `ADAPTIVE_QUEUE_MAX_WAIT_MS` | `30000` | Maximum time a synchronous request waits for a model slot. |
 | `ASYNC_JOB_RETENTION_SECONDS` | `3600` | How long completed in-memory async jobs are retained for polling/idempotency. |
 | `ASYNC_JOB_TIMEOUT_SECONDS` | `300` | Background execution timeout for async jobs. |
 
-### Queue Sizing Guidance
-
-The synchronous queue is a short shock absorber, not a durable work backlog. Size it from the maximum time callers are willing to keep an HTTP request open and from retry-enabled measurements, not from no-retry stress tests.
-
-Important production implications:
-
-- Vertex retry/backoff holds a model permit longer. When `VERTEX_RETRY_MAX_ATTEMPTS` is greater than `1`, overload pressure drains the queue more slowly than a no-retry run.
-- AIMD reduces a model's concurrency limit after resource exhaustion, but that happens after the failed admitted request returns. Large bursts can still overshoot before the limiter learns.
-- A large queue can improve admission but can also create long tail waits. If the caller needs an 8 second queue-wait SLA, queue caps should usually be much lower than the default `2048`.
-- Fan-out product workflows, such as comparing many brand names for one user, should usually batch inputs, chunk the work, or use async jobs instead of firing many synchronous chat completions.
-
-In retry-enabled live benchmarks against Vertex, the observed 8 second queue-wait thresholds were much lower than the raw queue capacity:
-
-| Model | Max burst with queue wait <=8s | Max all-200 burst | First level exceeding 8s wait |
-| --- | ---: | ---: | ---: |
-| `gemini-3.5-flash` | `48` | `32` | `64` |
-| `gemini-3.1-flash-lite` | `24` | `24` | `32` |
-| `gemini-2.5-flash` | `12` | `8` | `16` |
-| `gemini-2.5-flash-lite` | `12` | `8` | `16` |
-| `gemini-2.5-flash-lite-preview-09-2025` | `12` | `8` | `16` |
-| `gemini-2.5-pro` | `12` | `8` | `16` |
-| `gemini-3-flash-preview` | `12` | `8` | `16` |
-| `gemini-3.1-pro-preview` | `8` | `8` | `12` |
-
-These numbers are environment- and quota-dependent. Re-run the benchmark harness for your project, region, model set, prompt shape, and retry settings before setting production caps.
+For queue sizing guidance and benchmark interpretation, see [Queue Sizing Guide](QUEUE_SIZING.md).
 
 ## Retries
 
