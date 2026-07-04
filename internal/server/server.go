@@ -23,6 +23,7 @@ import (
 	"github.com/example/go-llm-gateway/internal/gemini"
 	gwlog "github.com/example/go-llm-gateway/internal/logging"
 	"github.com/example/go-llm-gateway/internal/openai"
+	"github.com/example/go-llm-gateway/internal/vertexopenai"
 )
 
 type GeminiClient interface {
@@ -35,27 +36,60 @@ type GeminiClient interface {
 	DeleteCachedContent(ctx context.Context, id string) (json.RawMessage, error)
 }
 
+type VertexOpenAIClient interface {
+	ChatCompletions(ctx context.Context, req openai.ChatCompletionRequest, opts gemini.RequestOptions) (openai.ChatCompletionResponse, error)
+	StreamChatCompletions(ctx context.Context, req openai.ChatCompletionRequest, opts gemini.RequestOptions, onChunk func(openai.StreamChunk) error) error
+}
+
 type Server struct {
 	cfg          config.Config
 	resolver     *config.ModelResolver
 	gemini       GeminiClient
+	vertexOpenAI VertexOpenAIClient
 	logger       *gwlog.JSONLLogger
 	apiKeys      map[string]struct{}
 	catalogMu    sync.RWMutex
 	modelCatalog map[string]catalog.Model
+	limiters     *adaptiveLimiters
+	jobs         *memoryJobStore
 }
+
+type chatRuntime string
+
+const (
+	chatRuntimeGemini       chatRuntime = "gemini"
+	chatRuntimeVertexOpenAI chatRuntime = "vertex_openai"
+)
+
+type preparedChat struct {
+	Req             openai.ChatCompletionRequest
+	ResolvedModel   string
+	Runtime         chatRuntime
+	ServiceTier     string
+	RequestOpts     gemini.RequestOptions
+	GeminiRequest   gemini.GenerateRequest
+	ReasoningEffort string
+}
+
+var errInvalidModel = errors.New("invalid model")
 
 func New(cfg config.Config, gem GeminiClient, logger *gwlog.JSONLLogger) *Server {
 	keys := map[string]struct{}{}
 	for _, k := range cfg.GatewayAPIKeys {
 		keys[k] = struct{}{}
 	}
-	s := &Server{cfg: cfg, resolver: config.NewModelResolver(cfg), gemini: gem, logger: logger, apiKeys: keys, modelCatalog: map[string]catalog.Model{}}
+	s := &Server{cfg: cfg, resolver: config.NewModelResolver(cfg), gemini: gem, vertexOpenAI: vertexopenai.NewClient(cfg, auth.NewDefaultTokenProvider()), logger: logger, apiKeys: keys, modelCatalog: map[string]catalog.Model{}, limiters: newAdaptiveLimiters(cfg), jobs: newMemoryJobStore(time.Duration(cfg.AsyncJobRetentionSeconds) * time.Second)}
 	if cfg.ModelCatalogPath != "" {
 		if c, err := catalog.Load(cfg.ModelCatalogPath); err == nil {
 			s.setModelCatalog(c)
 		}
 	}
+	return s
+}
+
+func NewWithVertexOpenAI(cfg config.Config, gem GeminiClient, vertexClient VertexOpenAIClient, logger *gwlog.JSONLLogger) *Server {
+	s := New(cfg, gem, logger)
+	s.vertexOpenAI = vertexClient
 	return s
 }
 
@@ -74,7 +108,8 @@ func NewFromConfig(cfg config.Config) (*Server, error) {
 		return nil, err
 	}
 	gem := gemini.NewClient(cfg, auth.NewDefaultTokenProvider())
-	s := New(cfg, gem, logger)
+	vertexClient := vertexopenai.NewClient(cfg, auth.NewDefaultTokenProvider())
+	s := NewWithVertexOpenAI(cfg, gem, vertexClient, logger)
 	if cfg.ModelCatalogRefreshOnStart && cfg.ModelCatalogPath != "" {
 		go s.refreshModelCatalog(cfg.ModelCatalogPath)
 	}
@@ -180,6 +215,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/caches", s.caches)
 	mux.HandleFunc("/v1/caches/", s.cache)
 	mux.HandleFunc("/v1/chat/completions", s.chatCompletions)
+	mux.HandleFunc("/v1/chat/jobs", s.chatJobs)
+	mux.HandleFunc("/v1/chat/jobs/", s.chatJob)
 	return requestID(s.accessLog(recoverPanic(mux)))
 }
 
@@ -210,7 +247,12 @@ func (s *Server) model(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimSpace(strings.TrimPrefix(r.URL.Path, "/v1/models/"))
-	if id == "" || strings.Contains(id, "/") {
+	id, err := url.PathUnescape(id)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "model not found", "not_found")
+		return
+	}
+	if id == "" {
 		writeError(w, http.StatusNotFound, "model not found", "not_found")
 		return
 	}
@@ -306,57 +348,158 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
 		return
 	}
-	model, err := s.resolver.Resolve(req.Model)
+	chat, err := s.prepareChat(req)
 	if err != nil {
-		logEntry.Status = http.StatusBadRequest
+		status := http.StatusBadRequest
+		typ := "invalid_request_error"
+		if errors.Is(err, errInvalidModel) {
+			typ = "invalid_model"
+		}
+		logEntry.Status = status
 		logEntry.Error = err.Error()
-		writeError(w, http.StatusBadRequest, err.Error(), "invalid_model")
+		writeError(w, status, err.Error(), typ)
 		return
 	}
-	logEntry.VertexModel = model
+	logEntry.VertexModel = chat.ResolvedModel
 	logEntry.Stream = req.Stream
-
-	serviceTier, requestOpts, err := vertexRequestOptions(req.ServiceTier)
-	if err != nil {
-		logEntry.Status = http.StatusBadRequest
-		logEntry.Error = err.Error()
-		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
-		return
-	}
-	logEntry.ServiceTier = serviceTier
-
-	greq, err := gemini.FromOpenAI(req)
-	if err != nil {
-		logEntry.Status = http.StatusBadRequest
-		logEntry.Error = err.Error()
-		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
-		return
-	}
-	reasoningEffort, err := s.applyReasoningConfig(model, req, &greq)
-	if err != nil {
-		logEntry.Status = http.StatusBadRequest
-		logEntry.Error = err.Error()
-		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
-		return
-	}
-	logEntry.ReasoningEffort = reasoningEffort
+	logEntry.ServiceTier = chat.ServiceTier
+	logEntry.ReasoningEffort = chat.ReasoningEffort
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout())
 	defer cancel()
 	if req.Stream {
-		s.stream(ctx, w, model, reqID, greq, requestOpts, &logEntry, start)
+		permit, err := s.limiters.acquire(ctx, chat.ResolvedModel)
+		if err != nil {
+			status, code, msg := queueErrorResponse(err)
+			logEntry.Status = status
+			logEntry.Error = msg
+			writeErrorCode(w, status, msg, errorTypeForStatus(status), code)
+			return
+		}
+		if permit.Limit > 0 {
+			w.Header().Set("X-Byto-Queue-Wait-Ms", fmt.Sprint(permit.Wait.Milliseconds()))
+			w.Header().Set("X-Byto-Model-Queue-Depth", fmt.Sprint(permit.Queued))
+			w.Header().Set("X-Byto-Model-Queue-Max", fmt.Sprint(permit.QueueMax))
+			w.Header().Set("X-Byto-Model-In-Flight", fmt.Sprint(permit.InFlight))
+			w.Header().Set("X-Byto-Model-Concurrency-Limit", fmt.Sprint(permit.Limit))
+			logEntry.QueueWaitMS = permit.Wait.Milliseconds()
+			logEntry.ModelQueueDepth = permit.Queued
+			logEntry.ModelQueueMax = permit.QueueMax
+			logEntry.ModelInFlight = permit.InFlight
+			logEntry.ModelConcurrencyLimit = permit.Limit
+		}
+		var upstreamErr error
+		defer func() { permit.release(upstreamErr) }()
+		upstreamErr = s.streamChat(ctx, w, reqID, chat, &logEntry, start)
 		return
 	}
-	gresp, err := s.gemini.GenerateContent(ctx, model, greq, requestOpts)
+	resp, status, code, err := s.runChatCompletion(ctx, reqID, chat, &logEntry, start)
+	setAdaptiveHeaders(w, &logEntry)
+	if err != nil {
+		logEntry.Status = status
+		logEntry.Error = err.Error()
+		writeErrorCode(w, status, err.Error(), errorTypeForStatus(status), code)
+		return
+	}
+	logEntry.Status = status
+	writeJSON(w, status, resp)
+}
+
+func setAdaptiveHeaders(w http.ResponseWriter, logEntry *gwlog.RequestLog) {
+	if logEntry.ModelConcurrencyLimit <= 0 {
+		return
+	}
+	w.Header().Set("X-Byto-Queue-Wait-Ms", fmt.Sprint(logEntry.QueueWaitMS))
+	w.Header().Set("X-Byto-Model-Queue-Depth", fmt.Sprint(logEntry.ModelQueueDepth))
+	w.Header().Set("X-Byto-Model-Queue-Max", fmt.Sprint(logEntry.ModelQueueMax))
+	w.Header().Set("X-Byto-Model-In-Flight", fmt.Sprint(logEntry.ModelInFlight))
+	w.Header().Set("X-Byto-Model-Concurrency-Limit", fmt.Sprint(logEntry.ModelConcurrencyLimit))
+}
+
+func (s *Server) prepareChat(req openai.ChatCompletionRequest) (preparedChat, error) {
+	model, err := s.resolver.Resolve(req.Model)
+	if err != nil {
+		return preparedChat{}, fmt.Errorf("%w: %v", errInvalidModel, err)
+	}
+	serviceTier, requestOpts, err := vertexRequestOptions(req.ServiceTier)
+	if err != nil {
+		return preparedChat{}, err
+	}
+	chat := preparedChat{
+		Req:           req,
+		ResolvedModel: model,
+		Runtime:       chatRuntimeGemini,
+		ServiceTier:   serviceTier,
+		RequestOpts:   requestOpts,
+	}
+	if s.usesVertexOpenAI(model) {
+		chat.Runtime = chatRuntimeVertexOpenAI
+		chat.Req.Model = model
+		reasoningEffort, err := requestedReasoningEffort(chat.Req)
+		if err != nil {
+			return preparedChat{}, err
+		}
+		if reasoningEffort != "" {
+			chat.Req.ReasoningEffort = reasoningEffort
+			chat.ReasoningEffort = reasoningEffort
+		}
+		return chat, nil
+	}
+	greq, err := gemini.FromOpenAI(req)
+	if err != nil {
+		return preparedChat{}, err
+	}
+	reasoningEffort, err := s.applyReasoningConfig(model, req, &greq)
+	if err != nil {
+		return preparedChat{}, err
+	}
+	chat.GeminiRequest = greq
+	chat.ReasoningEffort = reasoningEffort
+	return chat, nil
+}
+
+func (s *Server) runChatCompletion(ctx context.Context, reqID string, chat preparedChat, logEntry *gwlog.RequestLog, start time.Time) (openai.ChatCompletionResponse, int, string, error) {
+	permit, err := s.limiters.acquire(ctx, chat.ResolvedModel)
+	if err != nil {
+		status, code, msg := queueErrorResponse(err)
+		return openai.ChatCompletionResponse{}, status, code, errors.New(msg)
+	}
+	if permit.Limit > 0 {
+		logEntry.QueueWaitMS = permit.Wait.Milliseconds()
+		logEntry.ModelQueueDepth = permit.Queued
+		logEntry.ModelQueueMax = permit.QueueMax
+		logEntry.ModelInFlight = permit.InFlight
+		logEntry.ModelConcurrencyLimit = permit.Limit
+	}
+	var upstreamErr error
+	defer func() { permit.release(upstreamErr) }()
+	resp, err := s.dispatchChat(ctx, reqID, chat, logEntry)
+	upstreamErr = err
 	logEntry.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
-		logEntry.Status = vertexGatewayStatus(err)
-		logEntry.Error = err.Error()
-		setUpstreamLog(&logEntry, err)
-		writeError(w, logEntry.Status, err.Error(), "vertex_error")
-		return
+		setUpstreamLog(logEntry, err)
+		return openai.ChatCompletionResponse{}, gatewayStatus(err), vertexErrorCode(err), err
 	}
-	logEntry.Status = http.StatusOK
+	return resp, http.StatusOK, "", nil
+}
+
+func (s *Server) dispatchChat(ctx context.Context, reqID string, chat preparedChat, logEntry *gwlog.RequestLog) (openai.ChatCompletionResponse, error) {
+	if chat.Runtime == chatRuntimeVertexOpenAI {
+		resp, err := s.vertexOpenAI.ChatCompletions(ctx, chat.Req, chat.RequestOpts)
+		if err != nil {
+			return openai.ChatCompletionResponse{}, err
+		}
+		logEntry.PromptTokens = resp.Usage.PromptTokens
+		logEntry.CompletionTokens = resp.Usage.CompletionTokens
+		logEntry.TotalTokens = resp.Usage.TotalTokens
+		logEntry.CachedTokens = resp.Usage.CachedTokens
+		logEntry.TrafficType = resp.Usage.TrafficType
+		return resp, nil
+	}
+	gresp, err := s.gemini.GenerateContent(ctx, chat.ResolvedModel, chat.GeminiRequest, chat.RequestOpts)
+	if err != nil {
+		return openai.ChatCompletionResponse{}, err
+	}
 	logEntry.PromptTokens = gresp.UsageMetadata.PromptTokenCount
 	logEntry.CompletionTokens = gresp.UsageMetadata.CandidatesTokenCount
 	logEntry.TotalTokens = gresp.UsageMetadata.TotalTokenCount
@@ -367,29 +510,55 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 	if logEntry.ThoughtsTokens > 0 {
 		completionDetails = &openai.CompletionTokensDetails{ReasoningTokens: logEntry.ThoughtsTokens}
 	}
-	resp := openai.ChatCompletionResponse{
-		ID: "chatcmpl-" + reqID, Object: "chat.completion", Created: time.Now().Unix(), Model: model,
+	return openai.ChatCompletionResponse{
+		ID: "chatcmpl-" + reqID, Object: "chat.completion", Created: time.Now().Unix(), Model: chat.ResolvedModel,
 		Choices: []openai.Choice{{Index: 0, Message: openai.ResponseMessage{Role: "assistant", Content: gemini.TextFromResponse(gresp)}, FinishReason: gemini.FinishReason(gresp)}},
 		Usage:   openai.Usage{PromptTokens: logEntry.PromptTokens, CompletionTokens: logEntry.CompletionTokens, TotalTokens: logEntry.TotalTokens, CachedTokens: logEntry.CachedTokens, CompletionTokensDetails: completionDetails, TrafficType: logEntry.TrafficType},
-	}
-	writeJSON(w, http.StatusOK, resp)
+	}, nil
 }
 
-func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID string, greq gemini.GenerateRequest, opts gemini.RequestOptions, logEntry *gwlog.RequestLog, start time.Time) {
+func (s *Server) streamChat(ctx context.Context, w http.ResponseWriter, reqID string, chat preparedChat, logEntry *gwlog.RequestLog, start time.Time) error {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		logEntry.Status = http.StatusInternalServerError
 		writeError(w, http.StatusInternalServerError, "streaming unsupported", "server_error")
-		return
+		return errors.New("streaming unsupported")
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+	if chat.Runtime == chatRuntimeVertexOpenAI {
+		logEntry.Status = http.StatusOK
+		err := s.vertexOpenAI.StreamChatCompletions(ctx, chat.Req, chat.RequestOpts, func(chunk openai.StreamChunk) error {
+			if chunk.Usage != nil {
+				logEntry.PromptTokens += chunk.Usage.PromptTokens
+				logEntry.CompletionTokens += chunk.Usage.CompletionTokens
+				logEntry.TotalTokens += chunk.Usage.TotalTokens
+				logEntry.CachedTokens += chunk.Usage.CachedTokens
+				if chunk.Usage.TrafficType != "" {
+					logEntry.TrafficType = chunk.Usage.TrafficType
+				}
+			}
+			sendSSE(w, chunk)
+			flusher.Flush()
+			return nil
+		})
+		logEntry.LatencyMS = time.Since(start).Milliseconds()
+		if err != nil {
+			logEntry.Error = err.Error()
+			setUpstreamLog(logEntry, err)
+			log.Printf("vertex openai stream error request_id=%s err=%v", logEntry.RequestID, err)
+			return err
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+		flusher.Flush()
+		return nil
+	}
 	created := time.Now().Unix()
 	logEntry.Status = http.StatusOK
 	first := true
-	err := s.gemini.StreamGenerateContent(ctx, model, greq, opts, func(chunk gemini.GenerateResponse) error {
+	err := s.gemini.StreamGenerateContent(ctx, chat.ResolvedModel, chat.GeminiRequest, chat.RequestOpts, func(chunk gemini.GenerateResponse) error {
 		text := gemini.TextFromResponse(chunk)
 		logEntry.PromptTokens += chunk.UsageMetadata.PromptTokenCount
 		logEntry.CompletionTokens += chunk.UsageMetadata.CandidatesTokenCount
@@ -401,10 +570,10 @@ func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID
 		}
 		if first {
 			first = false
-			sendSSE(w, openai.StreamChunk{ID: "chatcmpl-" + reqID, Object: "chat.completion.chunk", Created: created, Model: model, Choices: []openai.StreamChoice{{Index: 0, Delta: openai.StreamDelta{Role: "assistant"}, FinishReason: nil}}})
+			sendSSE(w, openai.StreamChunk{ID: "chatcmpl-" + reqID, Object: "chat.completion.chunk", Created: created, Model: chat.ResolvedModel, Choices: []openai.StreamChoice{{Index: 0, Delta: openai.StreamDelta{Role: "assistant"}, FinishReason: nil}}})
 		}
 		if text != "" {
-			sendSSE(w, openai.StreamChunk{ID: "chatcmpl-" + reqID, Object: "chat.completion.chunk", Created: created, Model: model, Choices: []openai.StreamChoice{{Index: 0, Delta: openai.StreamDelta{Content: text}, FinishReason: nil}}})
+			sendSSE(w, openai.StreamChunk{ID: "chatcmpl-" + reqID, Object: "chat.completion.chunk", Created: created, Model: chat.ResolvedModel, Choices: []openai.StreamChoice{{Index: 0, Delta: openai.StreamDelta{Content: text}, FinishReason: nil}}})
 		}
 		flusher.Flush()
 		return nil
@@ -414,12 +583,110 @@ func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID
 		logEntry.Error = err.Error()
 		setUpstreamLog(logEntry, err)
 		log.Printf("stream error request_id=%s err=%v", reqID, err)
-		return
+		return err
 	}
 	finish := "stop"
-	sendSSE(w, openai.StreamChunk{ID: "chatcmpl-" + reqID, Object: "chat.completion.chunk", Created: created, Model: model, Choices: []openai.StreamChoice{{Index: 0, Delta: openai.StreamDelta{}, FinishReason: &finish}}})
+	sendSSE(w, openai.StreamChunk{ID: "chatcmpl-" + reqID, Object: "chat.completion.chunk", Created: created, Model: chat.ResolvedModel, Choices: []openai.StreamChoice{{Index: 0, Delta: openai.StreamDelta{}, FinishReason: &finish}}})
 	fmt.Fprint(w, "data: [DONE]\n\n")
 	flusher.Flush()
+	return nil
+}
+
+func (s *Server) chatJobs(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/v1/chat/jobs" {
+		writeError(w, http.StatusNotFound, "job not found", "not_found")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed")
+		return
+	}
+	if !s.authorized(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid_api_key")
+		return
+	}
+	var req openai.ChatCompletionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json", "invalid_request_error")
+		return
+	}
+	if req.Stream {
+		writeErrorCode(w, http.StatusBadRequest, "async chat jobs do not support stream=true", "invalid_request_error", "invalid_request")
+		return
+	}
+	if err := openai.ValidateRequest(req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+		return
+	}
+	chat, err := s.prepareChat(req)
+	if err != nil {
+		typ := "invalid_request_error"
+		if errors.Is(err, errInvalidModel) {
+			typ = "invalid_model"
+		}
+		writeError(w, http.StatusBadRequest, err.Error(), typ)
+		return
+	}
+	job, created := s.jobs.Create(jobScope(r), strings.TrimSpace(r.Header.Get("Idempotency-Key")), chat)
+	if created {
+		go s.runChatJob(job.ID)
+	}
+	writeJSON(w, http.StatusAccepted, job)
+}
+
+func (s *Server) chatJob(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid_api_key")
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/chat/jobs/"), "/")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, http.StatusNotFound, "job not found", "not_found")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		job, ok := s.jobs.Get(id)
+		if !ok {
+			writeError(w, http.StatusNotFound, "job not found", "not_found")
+			return
+		}
+		writeJSON(w, http.StatusOK, job)
+	case http.MethodDelete:
+		job, ok := s.jobs.Cancel(id)
+		if !ok {
+			writeError(w, http.StatusNotFound, "job not found", "not_found")
+			return
+		}
+		writeJSON(w, http.StatusOK, job)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed")
+	}
+}
+
+func (s *Server) runChatJob(id string) {
+	chat, ok := s.jobs.request(id)
+	if !ok {
+		return
+	}
+	start := time.Now()
+	reqID := strings.TrimPrefix(id, "chatjob-")
+	logEntry := gwlog.RequestLog{Timestamp: start.UTC(), RequestID: reqID, Model: chat.Req.Model, Stream: chat.Req.Stream, VertexModel: chat.ResolvedModel, ServiceTier: chat.ServiceTier, ReasoningEffort: chat.ReasoningEffort}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.cfg.AsyncJobTimeoutSeconds)*time.Second)
+	if !s.jobs.MarkRunning(id, cancel) {
+		cancel()
+		return
+	}
+	resp, status, code, err := s.runChatCompletion(ctx, reqID, chat, &logEntry, start)
+	cancel()
+	if err != nil {
+		if isCanceledError(err) {
+			return
+		}
+		s.jobs.Fail(id, status, err.Error(), code)
+		return
+	}
+	s.jobs.Complete(id, resp)
 }
 
 func sendSSE(w http.ResponseWriter, v any) {
@@ -458,6 +725,55 @@ func vertexGatewayStatus(err error) int {
 	return http.StatusBadGateway
 }
 
+func gatewayStatus(err error) int {
+	if ve, ok := err.(*gemini.VertexError); ok {
+		switch ve.Status {
+		case http.StatusTooManyRequests:
+			return http.StatusTooManyRequests
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return ve.Status
+		default:
+			return http.StatusBadGateway
+		}
+	}
+	return http.StatusBadGateway
+}
+
+func vertexErrorCode(err error) string {
+	var ve *gemini.VertexError
+	if !errors.As(err, &ve) {
+		return "upstream_error"
+	}
+	body := strings.ToUpper(ve.Body)
+	switch {
+	case ve.Status == http.StatusTooManyRequests && isResourceExhaustionBody(body):
+		return "temporary_resource_exhausted"
+	case ve.Status == http.StatusTooManyRequests:
+		return "quota_or_rate_limit"
+	case ve.Status >= 500:
+		return "upstream_error"
+	default:
+		return "vertex_error"
+	}
+}
+
+func queueErrorResponse(err error) (int, string, string) {
+	switch {
+	case errors.Is(err, errAdaptiveQueueFull):
+		return http.StatusTooManyRequests, "queue_full", "model queue is full; retry later"
+	case errors.Is(err, errAdaptiveQueueTimeout):
+		return http.StatusTooManyRequests, "queue_timeout", "timed out waiting for model capacity"
+	case errors.Is(err, context.Canceled):
+		return http.StatusTooManyRequests, "request_canceled", err.Error()
+	default:
+		return http.StatusTooManyRequests, "temporary_resource_exhausted", err.Error()
+	}
+}
+
+func isResourceExhaustionBody(body string) bool {
+	return strings.Contains(body, "RESOURCE_EXHAUSTED") || strings.Contains(body, "RESOURCE EXHAUSTED") || strings.Contains(body, "CAPACITY") || strings.Contains(body, "RESOURCE HAS BEEN EXHAUSTED")
+}
+
 func classifyUpstreamStatus(status int) string {
 	switch {
 	case status == http.StatusTooManyRequests:
@@ -493,8 +809,12 @@ func (s *Server) modelInfo(id string) openai.ModelInfo {
 	if !ok {
 		return info
 	}
+	if strings.TrimSpace(m.Publisher) != "" {
+		info.OwnedBy = m.Publisher
+	}
 	info.DisplayName = m.DisplayName
 	info.Family = m.Family
+	info.Runtime = m.Runtime
 	info.Enabled = boolPtr(m.Enabled)
 	info.Available = boolPtr(m.Available)
 	info.LaunchStage = m.LaunchStage
@@ -525,6 +845,16 @@ func (s *Server) modelInfo(id string) openai.ModelInfo {
 		info.LastSeenAt = m.LastSeenAt.Format(time.RFC3339)
 	}
 	return info
+}
+
+func (s *Server) usesVertexOpenAI(model string) bool {
+	s.catalogMu.RLock()
+	m, ok := s.modelCatalog[model]
+	s.catalogMu.RUnlock()
+	if ok {
+		return m.Runtime == "vertex_openai"
+	}
+	return catalog.IsSupportedVertexOpenAIModel(model)
 }
 
 func hasCapabilities(c openai.ModelCapabilities) bool {
@@ -700,7 +1030,11 @@ func writeRawJSON(w http.ResponseWriter, status int, b []byte) {
 	}
 }
 func writeError(w http.ResponseWriter, status int, msg, typ string) {
-	writeJSON(w, status, openai.ErrorResponse{Error: openai.ErrorBody{Message: msg, Type: typ}})
+	writeErrorCode(w, status, msg, typ, "")
+}
+
+func writeErrorCode(w http.ResponseWriter, status int, msg, typ, code string) {
+	writeJSON(w, status, openai.ErrorResponse{Error: openai.ErrorBody{Message: msg, Type: typ, Code: code}})
 }
 
 type requestIDKey struct{}

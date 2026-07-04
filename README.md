@@ -17,7 +17,7 @@ Byto is a Go gateway that turns your own Vertex AI Gemini access into an OpenAI-
 your apps -> Byto -> Vertex AI Gemini
 ```
 
-It is built for explicit model selection, service API keys, production service-account auth, priority PayGo headers, reasoning controls, JSONL logs, and Docker/server deployments.
+It is built for explicit model selection, service API keys, production service-account auth, priority PayGo headers, reasoning controls, adaptive per-model concurrency, JSONL logs, and Docker/server deployments.
 
 ---
 
@@ -134,6 +134,7 @@ curl -s http://localhost:8080/v1/chat/completions \
 ## What You Get
 
 - `POST /v1/chat/completions`
+- `POST /v1/chat/jobs`, `GET /v1/chat/jobs/{id}`, `DELETE /v1/chat/jobs/{id}` for explicit async chat jobs
 - `GET /v1/models`
 - `GET /healthz`
 - OpenAI-style `model`, `messages`, `stream`, `service_tier`, and `reasoning_effort`
@@ -141,6 +142,7 @@ curl -s http://localhost:8080/v1/chat/completions \
 - API-key gateway auth
 - Durable service-account auth for production
 - Startup model-catalog refresh with Vertex `countTokens` availability checks
+- Adaptive per-model concurrency with bounded per-model wait queues plus exponential backoff for Vertex resource exhaustion
 - JSONL access/request logs with token usage, traffic type, reasoning tokens, and upstream status
 
 Full API docs: [docs/API.md](docs/API.md)
@@ -153,7 +155,9 @@ Detailed setup docs: [docs/SETUP_DETAIL.md](docs/SETUP_DETAIL.md)
 
 There is no default model. If `model` is missing or empty, Byto returns `400`.
 
-Allowed models come from [config/models.json](config/models.json), aliases, or `ALLOW_ANY_GEMINI_MODEL=true`. Startup refresh syncs the catalog against the current supported Google Gemini endpoint model list, then checks each candidate with Vertex `countTokens`. Models that pass are enabled for your project/location; hard failures like `404`/`403` stay disabled.
+Allowed models come from [config/models.json](config/models.json), aliases, or `ALLOW_ANY_GEMINI_MODEL=true`. Gemini entries use Vertex `generateContent`; entries with `runtime: "vertex_openai"` use the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint. Startup refresh syncs only the Gemini catalog candidates against the current supported Google Gemini endpoint model list, then checks each candidate with Vertex `countTokens`. Models that pass are enabled for your project/location; hard failures like `404`/`403` stay disabled.
+
+The bundled MaaS catalog includes only non-Gemini models that were live-proven to reply for this project/workstream. If a listed MaaS model is not enabled for your Google Cloud account, Byto returns a provider access error instead of trying to accept Marketplace terms or change billing/project settings.
 
 ---
 

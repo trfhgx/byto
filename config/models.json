@@ -388,6 +388,536 @@
       "capabilities": {},
       "notes": "Not in the current supported Google Gemini endpoint model list. Kept only as disabled historical metadata.",
       "last_seen_at": "2026-07-03T07:27:06.95568Z"
+    },
+    {
+      "id": "google/gemma-4-26b-a4b-it-maas",
+      "display_name": "Gemma 4 26B A4B IT MaaS",
+      "publisher": "google",
+      "family": "gemma",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "minimaxai/minimax-m2-maas",
+      "display_name": "MiniMax M2 MaaS",
+      "publisher": "minimaxai",
+      "family": "minimax",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "moonshotai/kimi-k2-thinking-maas",
+      "display_name": "Kimi K2 Thinking MaaS",
+      "publisher": "moonshotai",
+      "family": "kimi",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "reasoning_effort": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "openai/gpt-oss-120b-maas",
+      "display_name": "GPT-OSS 120B MaaS",
+      "publisher": "openai",
+      "family": "gpt-oss",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "openai/gpt-oss-20b-maas",
+      "display_name": "GPT-OSS 20B MaaS",
+      "publisher": "openai",
+      "family": "gpt-oss",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "qwen/qwen3-235b-a22b-instruct-2507-maas",
+      "display_name": "Qwen3 235B A22B Instruct MaaS",
+      "publisher": "qwen",
+      "family": "qwen",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "qwen/qwen3-coder-480b-a35b-instruct-maas",
+      "display_name": "Qwen3 Coder 480B A35B Instruct MaaS",
+      "publisher": "qwen",
+      "family": "qwen",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "qwen/qwen3-next-80b-a3b-instruct-maas",
+      "display_name": "Qwen3 Next 80B A3B Instruct MaaS",
+      "publisher": "qwen",
+      "family": "qwen",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "qwen/qwen3-next-80b-a3b-thinking-maas",
+      "display_name": "Qwen3 Next 80B A3B Thinking MaaS",
+      "publisher": "qwen",
+      "family": "qwen",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "reasoning_effort": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "xai/grok-4.1-fast-non-reasoning",
+      "display_name": "Grok 4.1 Fast Non-Reasoning",
+      "publisher": "xai",
+      "family": "grok",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "xai/grok-4.1-fast-reasoning",
+      "display_name": "Grok 4.1 Fast Reasoning",
+      "publisher": "xai",
+      "family": "grok",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "reasoning_effort": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "xai/grok-4.20-non-reasoning",
+      "display_name": "Grok 4.20 Non-Reasoning",
+      "publisher": "xai",
+      "family": "grok",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "xai/grok-4.20-reasoning",
+      "display_name": "Grok 4.20 Reasoning",
+      "publisher": "xai",
+      "family": "grok",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "reasoning_effort": [
+          "low",
+          "medium",
+          "high"
+        ],
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "zai-org/glm-4.7-maas",
+      "display_name": "GLM 4.7 MaaS",
+      "publisher": "zai-org",
+      "family": "glm",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
+    },
+    {
+      "id": "zai-org/glm-5-maas",
+      "display_name": "GLM 5 MaaS",
+      "publisher": "zai-org",
+      "family": "glm",
+      "runtime": "vertex_openai",
+      "enabled": true,
+      "available": true,
+      "launch_stage": "GA",
+      "supported_actions": [
+        "chat.completions",
+        "chat.completions.stream"
+      ],
+      "capabilities": {
+        "input": [
+          "text"
+        ],
+        "output": [
+          "text"
+        ],
+        "streaming": true,
+        "generation_parameters": [
+          "max_tokens",
+          "temperature",
+          "top_p",
+          "stop",
+          "frequency_penalty",
+          "presence_penalty",
+          "seed"
+        ]
+      },
+      "notes": "Live-proven through the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint.",
+      "last_seen_at": "2026-07-03T17:30:27Z"
     }
   ]
 }

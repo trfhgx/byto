@@ -102,6 +102,11 @@ REQUEST_TIMEOUT_SECONDS=180
 VERTEX_RETRY_MAX_ATTEMPTS=3
 VERTEX_RETRY_INITIAL_MS=250
 VERTEX_RETRY_MAX_MS=2000
+
+ADAPTIVE_CONCURRENCY_ENABLED=true
+ADAPTIVE_CONCURRENCY_MIN=1
+ADAPTIVE_CONCURRENCY_INITIAL=4
+ADAPTIVE_CONCURRENCY_MAX=32
 ```
 
 ## Model Catalog
@@ -116,7 +121,9 @@ Byto resolves models in this order:
 4. If `ALLOW_ANY_GEMINI_MODEL=true`, accept any resolved model that starts with `gemini-`.
 5. Reject everything else.
 
-The catalog stores enabled state, live availability, supported actions, generation parameters, reasoning tiers, and reasoning-budget mappings. Startup refresh syncs against the current supported Google Gemini endpoint model list, marks stale IDs unavailable, and checks each supported candidate with Vertex `countTokens`. Passing candidates are enabled for your project/location; hard failures such as `404`, `403`, `401`, and `400` are disabled. Transient failures such as `429`, `5xx`, or timeout keep the previous catalog state.
+The catalog stores runtime, enabled state, live availability, supported actions, generation parameters, reasoning tiers, and reasoning-budget mappings. Gemini entries use Vertex `generateContent`; entries with `runtime: "vertex_openai"` use the Vertex / Gemini Enterprise Agent Platform OpenAI-compatible chat completions endpoint. Startup refresh syncs only Gemini candidates against the current supported Google Gemini endpoint model list, marks stale Gemini IDs unavailable, and checks each supported Gemini candidate with Vertex `countTokens`. Passing candidates are enabled for your project/location; hard failures such as `404`, `403`, `401`, and `400` are disabled. Transient failures such as `429`, `5xx`, or timeout keep the previous state.
+
+The bundled MaaS entries are limited to non-Gemini models that were live-proven to reply for this project/workstream. Byto does not accept Marketplace terms or make project/billing changes from code; inaccessible MaaS models return a provider access error.
 
 ## Logs
 

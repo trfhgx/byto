@@ -27,6 +27,14 @@ type Config struct {
 	VertexRetryMaxAttempts      int               `json:"vertex_retry_max_attempts"`
 	VertexRetryInitialMS        int               `json:"vertex_retry_initial_ms"`
 	VertexRetryMaxMS            int               `json:"vertex_retry_max_ms"`
+	AdaptiveConcurrencyEnabled  bool              `json:"adaptive_concurrency_enabled"`
+	AdaptiveConcurrencyMin      int               `json:"adaptive_concurrency_min"`
+	AdaptiveConcurrencyInitial  int               `json:"adaptive_concurrency_initial"`
+	AdaptiveConcurrencyMax      int               `json:"adaptive_concurrency_max"`
+	AdaptiveQueueMaxDepth       int               `json:"adaptive_queue_max_depth"`
+	AdaptiveQueueMaxWaitMS      int               `json:"adaptive_queue_max_wait_ms"`
+	AsyncJobRetentionSeconds    int               `json:"async_job_retention_seconds"`
+	AsyncJobTimeoutSeconds      int               `json:"async_job_timeout_seconds"`
 }
 
 func Load() (Config, error) {
@@ -88,6 +96,14 @@ func defaults() Config {
 		VertexRetryMaxAttempts:     3,
 		VertexRetryInitialMS:       250,
 		VertexRetryMaxMS:           2000,
+		AdaptiveConcurrencyEnabled: true,
+		AdaptiveConcurrencyMin:     1,
+		AdaptiveConcurrencyInitial: 4,
+		AdaptiveConcurrencyMax:     32,
+		AdaptiveQueueMaxDepth:      2048,
+		AdaptiveQueueMaxWaitMS:     30000,
+		AsyncJobRetentionSeconds:   3600,
+		AsyncJobTimeoutSeconds:     300,
 	}
 }
 
@@ -150,6 +166,44 @@ func overrideFromEnv(c *Config) {
 			c.VertexRetryMaxMS = n
 		}
 	}
+	if v := os.Getenv("ADAPTIVE_CONCURRENCY_ENABLED"); v != "" {
+		c.AdaptiveConcurrencyEnabled = strings.EqualFold(v, "true") || v == "1"
+	}
+	if v := os.Getenv("ADAPTIVE_CONCURRENCY_MIN"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.AdaptiveConcurrencyMin = n
+		}
+	}
+	if v := os.Getenv("ADAPTIVE_CONCURRENCY_INITIAL"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.AdaptiveConcurrencyInitial = n
+		}
+	}
+	if v := os.Getenv("ADAPTIVE_CONCURRENCY_MAX"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.AdaptiveConcurrencyMax = n
+		}
+	}
+	if v := os.Getenv("ADAPTIVE_QUEUE_MAX_DEPTH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 {
+			c.AdaptiveQueueMaxDepth = n
+		}
+	}
+	if v := os.Getenv("ADAPTIVE_QUEUE_MAX_WAIT_MS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.AdaptiveQueueMaxWaitMS = n
+		}
+	}
+	if v := os.Getenv("ASYNC_JOB_RETENTION_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.AsyncJobRetentionSeconds = n
+		}
+	}
+	if v := os.Getenv("ASYNC_JOB_TIMEOUT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			c.AsyncJobTimeoutSeconds = n
+		}
+	}
 }
 
 func (c Config) Validate() error {
@@ -179,6 +233,35 @@ func (c Config) Validate() error {
 	}
 	if c.VertexRetryMaxMS <= 0 {
 		return errors.New("VERTEX_RETRY_MAX_MS must be positive")
+	}
+	if c.AdaptiveConcurrencyEnabled {
+		if c.AdaptiveConcurrencyMin <= 0 {
+			return errors.New("ADAPTIVE_CONCURRENCY_MIN must be positive")
+		}
+		if c.AdaptiveConcurrencyInitial <= 0 {
+			return errors.New("ADAPTIVE_CONCURRENCY_INITIAL must be positive")
+		}
+		if c.AdaptiveConcurrencyMax <= 0 {
+			return errors.New("ADAPTIVE_CONCURRENCY_MAX must be positive")
+		}
+		if c.AdaptiveConcurrencyMin > c.AdaptiveConcurrencyInitial {
+			return errors.New("ADAPTIVE_CONCURRENCY_MIN must be less than or equal to ADAPTIVE_CONCURRENCY_INITIAL")
+		}
+		if c.AdaptiveConcurrencyInitial > c.AdaptiveConcurrencyMax {
+			return errors.New("ADAPTIVE_CONCURRENCY_INITIAL must be less than or equal to ADAPTIVE_CONCURRENCY_MAX")
+		}
+		if c.AdaptiveQueueMaxDepth < 0 {
+			return errors.New("ADAPTIVE_QUEUE_MAX_DEPTH must be non-negative")
+		}
+		if c.AdaptiveQueueMaxWaitMS <= 0 {
+			return errors.New("ADAPTIVE_QUEUE_MAX_WAIT_MS must be positive")
+		}
+	}
+	if c.AsyncJobRetentionSeconds <= 0 {
+		return errors.New("ASYNC_JOB_RETENTION_SECONDS must be positive")
+	}
+	if c.AsyncJobTimeoutSeconds <= 0 {
+		return errors.New("ASYNC_JOB_TIMEOUT_SECONDS must be positive")
 	}
 	return nil
 }

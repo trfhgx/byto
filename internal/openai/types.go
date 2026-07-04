@@ -88,6 +88,7 @@ type ModelInfo struct {
 	OwnedBy             string             `json:"owned_by"`
 	DisplayName         string             `json:"display_name,omitempty"`
 	Family              string             `json:"family,omitempty"`
+	Runtime             string             `json:"runtime,omitempty"`
 	Enabled             *bool              `json:"enabled,omitempty"`
 	Available           *bool              `json:"available,omitempty"`
 	LaunchStage         string             `json:"launch_stage,omitempty"`
@@ -114,6 +115,7 @@ type StreamChunk struct {
 	Created int64          `json:"created"`
 	Model   string         `json:"model"`
 	Choices []StreamChoice `json:"choices"`
+	Usage   *Usage         `json:"usage,omitempty"`
 }
 
 type StreamChoice struct {
