@@ -476,7 +476,7 @@ Byto can limit concurrent chat requests per resolved Vertex model and adjust tha
 
 The limiter starts at `ADAPTIVE_CONCURRENCY_INITIAL`, allows only that many in-flight requests for the model, increases slowly after clean completions, and reduces quickly when Vertex returns resource exhaustion. Requests that arrive while the model is already at its current limit may wait in a bounded per-model queue for up to `ADAPTIVE_QUEUE_MAX_WAIT_MS`. If the queue is full, Byto returns `429` with `code=queue_full`. If the wait expires, Byto returns `429` with `code=queue_timeout`. If the client disconnects while queued, that queued waiter is removed.
 
-Response headers on admitted chat requests:
+Response headers on admitted chat requests are written before the upstream Vertex call, so they are present on successful responses and on admitted requests that later return an upstream error such as `429 temporary_resource_exhausted`. They are not present when the request never receives a model slot, for example `queue_full`, `queue_timeout`, or client cancellation while still waiting.
 
 | Header | Description |
 | --- | --- |
@@ -485,6 +485,12 @@ Response headers on admitted chat requests:
 | `X-Byto-Model-Queue-Max` | Configured maximum queued synchronous requests per model. |
 | `X-Byto-Model-In-Flight` | In-flight count for the model after this request was admitted. |
 | `X-Byto-Model-Concurrency-Limit` | Current concurrency limit for the model when admitted. |
+
+Limiter scope:
+
+- The adaptive concurrency limiter is in-process and per resolved model. For example, `gemini-3.5-flash` and `gemini-3.1-flash-lite` have separate in-flight counts, queues, and learned AIMD limits.
+- Model aliases are resolved before limiter lookup, so aliases that point at the same Vertex model share the same limiter.
+- This is not a distributed limiter; multiple gateway processes each maintain their own local limiter state.
 
 Settings:
 
@@ -498,6 +504,32 @@ Settings:
 | `ADAPTIVE_QUEUE_MAX_WAIT_MS` | `30000` | Maximum time a synchronous request waits for a model slot. Raise this only when callers and upstream load balancers are prepared to keep HTTP requests open. |
 | `ASYNC_JOB_RETENTION_SECONDS` | `3600` | How long completed in-memory async jobs are retained for polling/idempotency. |
 | `ASYNC_JOB_TIMEOUT_SECONDS` | `300` | Background execution timeout for async jobs. |
+
+### Queue Sizing Guidance
+
+The synchronous queue is a short shock absorber, not a durable work backlog. Size it from the maximum time callers are willing to keep an HTTP request open and from retry-enabled measurements, not from no-retry stress tests.
+
+Important production implications:
+
+- Vertex retry/backoff holds a model permit longer. When `VERTEX_RETRY_MAX_ATTEMPTS` is greater than `1`, overload pressure drains the queue more slowly than a no-retry run.
+- AIMD reduces a model's concurrency limit after resource exhaustion, but that happens after the failed admitted request returns. Large bursts can still overshoot before the limiter learns.
+- A large queue can improve admission but can also create long tail waits. If the caller needs an 8 second queue-wait SLA, queue caps should usually be much lower than the default `2048`.
+- Fan-out product workflows, such as comparing many brand names for one user, should usually batch inputs, chunk the work, or use async jobs instead of firing many synchronous chat completions.
+
+In retry-enabled live benchmarks against Vertex, the observed 8 second queue-wait thresholds were much lower than the raw queue capacity:
+
+| Model | Max burst with queue wait <=8s | Max all-200 burst | First level exceeding 8s wait |
+| --- | ---: | ---: | ---: |
+| `gemini-3.5-flash` | `48` | `32` | `64` |
+| `gemini-3.1-flash-lite` | `24` | `24` | `32` |
+| `gemini-2.5-flash` | `12` | `8` | `16` |
+| `gemini-2.5-flash-lite` | `12` | `8` | `16` |
+| `gemini-2.5-flash-lite-preview-09-2025` | `12` | `8` | `16` |
+| `gemini-2.5-pro` | `12` | `8` | `16` |
+| `gemini-3-flash-preview` | `12` | `8` | `16` |
+| `gemini-3.1-pro-preview` | `8` | `8` | `12` |
+
+These numbers are environment- and quota-dependent. Re-run the benchmark harness for your project, region, model set, prompt shape, and retry settings before setting production caps.
 
 ## Retries
 
