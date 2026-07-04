@@ -374,6 +374,7 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, status, code, err := s.runChatCompletion(ctx, model, reqID, req, greq, requestOpts, &logEntry, start)
+	setAdaptiveHeaders(w, &logEntry)
 	if err != nil {
 		logEntry.Status = status
 		logEntry.Error = err.Error()
@@ -381,14 +382,18 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	logEntry.Status = status
-	if logEntry.ModelConcurrencyLimit > 0 {
-		w.Header().Set("X-Byto-Queue-Wait-Ms", fmt.Sprint(logEntry.QueueWaitMS))
-		w.Header().Set("X-Byto-Model-Queue-Depth", fmt.Sprint(logEntry.ModelQueueDepth))
-		w.Header().Set("X-Byto-Model-Queue-Max", fmt.Sprint(logEntry.ModelQueueMax))
-		w.Header().Set("X-Byto-Model-In-Flight", fmt.Sprint(logEntry.ModelInFlight))
-		w.Header().Set("X-Byto-Model-Concurrency-Limit", fmt.Sprint(logEntry.ModelConcurrencyLimit))
-	}
 	writeJSON(w, status, resp)
+}
+
+func setAdaptiveHeaders(w http.ResponseWriter, logEntry *gwlog.RequestLog) {
+	if logEntry.ModelConcurrencyLimit <= 0 {
+		return
+	}
+	w.Header().Set("X-Byto-Queue-Wait-Ms", fmt.Sprint(logEntry.QueueWaitMS))
+	w.Header().Set("X-Byto-Model-Queue-Depth", fmt.Sprint(logEntry.ModelQueueDepth))
+	w.Header().Set("X-Byto-Model-Queue-Max", fmt.Sprint(logEntry.ModelQueueMax))
+	w.Header().Set("X-Byto-Model-In-Flight", fmt.Sprint(logEntry.ModelInFlight))
+	w.Header().Set("X-Byto-Model-Concurrency-Limit", fmt.Sprint(logEntry.ModelConcurrencyLimit))
 }
 
 func (s *Server) runChatCompletion(ctx context.Context, model, reqID string, req openai.ChatCompletionRequest, greq gemini.GenerateRequest, requestOpts gemini.RequestOptions, logEntry *gwlog.RequestLog, start time.Time) (openai.ChatCompletionResponse, int, string, error) {

@@ -100,8 +100,8 @@ func defaults() Config {
 		AdaptiveConcurrencyMin:     1,
 		AdaptiveConcurrencyInitial: 4,
 		AdaptiveConcurrencyMax:     32,
-		AdaptiveQueueMaxDepth:      64,
-		AdaptiveQueueMaxWaitMS:     2000,
+		AdaptiveQueueMaxDepth:      2048,
+		AdaptiveQueueMaxWaitMS:     30000,
 		AsyncJobRetentionSeconds:   3600,
 		AsyncJobTimeoutSeconds:     300,
 	}

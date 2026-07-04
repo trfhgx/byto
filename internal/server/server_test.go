@@ -250,7 +250,7 @@ func TestChatCompletionPreservesResourceExhaustedStatus(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/requests.jsonl"
 	logger := testLogger(t, path)
-	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5}
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5, AdaptiveConcurrencyEnabled: true, AdaptiveConcurrencyMin: 1, AdaptiveConcurrencyInitial: 1, AdaptiveConcurrencyMax: 1, AdaptiveQueueMaxDepth: 1, AdaptiveQueueMaxWaitMS: 100}
 	s := New(cfg, fakeResourceExhaustedGemini{}, logger)
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`))
@@ -262,6 +262,9 @@ func TestChatCompletionPreservesResourceExhaustedStatus(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), `"code":"temporary_resource_exhausted"`) {
 		t.Fatalf("body missing resource exhausted code: %s", w.Body.String())
+	}
+	if w.Header().Get("X-Byto-Model-Concurrency-Limit") != "1" {
+		t.Fatalf("missing adaptive header on resource exhausted response: %#v", w.Header())
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {

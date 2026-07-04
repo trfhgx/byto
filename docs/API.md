@@ -494,8 +494,8 @@ Settings:
 | `ADAPTIVE_CONCURRENCY_MIN` | `1` | Lowest learned concurrency limit. |
 | `ADAPTIVE_CONCURRENCY_INITIAL` | `4` | Starting concurrency limit per model. |
 | `ADAPTIVE_CONCURRENCY_MAX` | `32` | Highest learned concurrency limit. |
-| `ADAPTIVE_QUEUE_MAX_DEPTH` | `64` | Maximum queued synchronous requests per model. Set to `0` to fail immediately when all slots are busy. |
-| `ADAPTIVE_QUEUE_MAX_WAIT_MS` | `2000` | Maximum time a synchronous request waits for a model slot. |
+| `ADAPTIVE_QUEUE_MAX_DEPTH` | `2048` | Maximum queued synchronous requests per model. Set to `0` to fail immediately when all slots are busy. Size this against process memory, load balancer timeout, and the number of model workers you expect to run. |
+| `ADAPTIVE_QUEUE_MAX_WAIT_MS` | `30000` | Maximum time a synchronous request waits for a model slot. Raise this only when callers and upstream load balancers are prepared to keep HTTP requests open. |
 | `ASYNC_JOB_RETENTION_SECONDS` | `3600` | How long completed in-memory async jobs are retained for polling/idempotency. |
 | `ASYNC_JOB_TIMEOUT_SECONDS` | `300` | Background execution timeout for async jobs. |
 

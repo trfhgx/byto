@@ -68,14 +68,14 @@ func newAdaptiveLimiters(cfg config.Config) *adaptiveLimiters {
 	}
 	queueMax := cfg.AdaptiveQueueMaxDepth
 	if queueMax == 0 && cfg.AdaptiveQueueMaxWaitMS == 0 {
-		queueMax = 64
+		queueMax = 2048
 	}
 	if queueMax < 0 {
 		queueMax = 0
 	}
 	maxWait := time.Duration(cfg.AdaptiveQueueMaxWaitMS) * time.Millisecond
 	if maxWait <= 0 {
-		maxWait = 2 * time.Second
+		maxWait = 30 * time.Second
 	}
 	return &adaptiveLimiters{
 		enabled:  cfg.AdaptiveConcurrencyEnabled,
