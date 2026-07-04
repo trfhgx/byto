@@ -17,5 +17,9 @@
   "adaptive_concurrency_enabled": true,
   "adaptive_concurrency_min": 1,
   "adaptive_concurrency_initial": 4,
-  "adaptive_concurrency_max": 32
+  "adaptive_concurrency_max": 32,
+  "adaptive_queue_max_depth": 64,
+  "adaptive_queue_max_wait_ms": 2000,
+  "async_job_retention_seconds": 3600,
+  "async_job_timeout_seconds": 300
 }

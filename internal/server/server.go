@@ -44,6 +44,7 @@ type Server struct {
 	catalogMu    sync.RWMutex
 	modelCatalog map[string]catalog.Model
 	limiters     *adaptiveLimiters
+	jobs         *memoryJobStore
 }
 
 func New(cfg config.Config, gem GeminiClient, logger *gwlog.JSONLLogger) *Server {
@@ -51,7 +52,7 @@ func New(cfg config.Config, gem GeminiClient, logger *gwlog.JSONLLogger) *Server
 	for _, k := range cfg.GatewayAPIKeys {
 		keys[k] = struct{}{}
 	}
-	s := &Server{cfg: cfg, resolver: config.NewModelResolver(cfg), gemini: gem, logger: logger, apiKeys: keys, modelCatalog: map[string]catalog.Model{}, limiters: newAdaptiveLimiters(cfg)}
+	s := &Server{cfg: cfg, resolver: config.NewModelResolver(cfg), gemini: gem, logger: logger, apiKeys: keys, modelCatalog: map[string]catalog.Model{}, limiters: newAdaptiveLimiters(cfg), jobs: newMemoryJobStore(time.Duration(cfg.AsyncJobRetentionSeconds) * time.Second)}
 	if cfg.ModelCatalogPath != "" {
 		if c, err := catalog.Load(cfg.ModelCatalogPath); err == nil {
 			s.setModelCatalog(c)
@@ -181,6 +182,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("/v1/caches", s.caches)
 	mux.HandleFunc("/v1/caches/", s.cache)
 	mux.HandleFunc("/v1/chat/completions", s.chatCompletions)
+	mux.HandleFunc("/v1/chat/jobs", s.chatJobs)
+	mux.HandleFunc("/v1/chat/jobs/", s.chatJob)
 	return requestID(s.accessLog(recoverPanic(mux)))
 }
 
@@ -344,38 +347,64 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout())
 	defer cancel()
-	permit, err := s.limiters.acquire(ctx, model)
-	if err != nil {
-		logEntry.Status = http.StatusTooManyRequests
-		logEntry.Error = err.Error()
-		writeError(w, http.StatusTooManyRequests, "model is busy; retry later", "server_overloaded")
+	if req.Stream {
+		permit, err := s.limiters.acquire(ctx, model)
+		if err != nil {
+			status, code, msg := queueErrorResponse(err)
+			logEntry.Status = status
+			logEntry.Error = msg
+			writeErrorCode(w, status, msg, errorTypeForStatus(status), code)
+			return
+		}
+		if permit.Limit > 0 {
+			w.Header().Set("X-Byto-Queue-Wait-Ms", fmt.Sprint(permit.Wait.Milliseconds()))
+			w.Header().Set("X-Byto-Model-In-Flight", fmt.Sprint(permit.InFlight))
+			w.Header().Set("X-Byto-Model-Concurrency-Limit", fmt.Sprint(permit.Limit))
+			logEntry.QueueWaitMS = permit.Wait.Milliseconds()
+			logEntry.ModelInFlight = permit.InFlight
+			logEntry.ModelConcurrencyLimit = permit.Limit
+		}
+		var upstreamErr error
+		defer func() { permit.release(upstreamErr) }()
+		upstreamErr = s.stream(ctx, w, model, reqID, greq, requestOpts, &logEntry, start)
 		return
 	}
+	resp, status, code, err := s.runChatCompletion(ctx, model, reqID, req, greq, requestOpts, &logEntry, start)
+	if err != nil {
+		logEntry.Status = status
+		logEntry.Error = err.Error()
+		writeErrorCode(w, status, err.Error(), errorTypeForStatus(status), code)
+		return
+	}
+	logEntry.Status = status
+	if logEntry.ModelConcurrencyLimit > 0 {
+		w.Header().Set("X-Byto-Queue-Wait-Ms", fmt.Sprint(logEntry.QueueWaitMS))
+		w.Header().Set("X-Byto-Model-In-Flight", fmt.Sprint(logEntry.ModelInFlight))
+		w.Header().Set("X-Byto-Model-Concurrency-Limit", fmt.Sprint(logEntry.ModelConcurrencyLimit))
+	}
+	writeJSON(w, status, resp)
+}
+
+func (s *Server) runChatCompletion(ctx context.Context, model, reqID string, req openai.ChatCompletionRequest, greq gemini.GenerateRequest, requestOpts gemini.RequestOptions, logEntry *gwlog.RequestLog, start time.Time) (openai.ChatCompletionResponse, int, string, error) {
+	permit, err := s.limiters.acquire(ctx, model)
+	if err != nil {
+		status, code, msg := queueErrorResponse(err)
+		return openai.ChatCompletionResponse{}, status, code, errors.New(msg)
+	}
 	if permit.Limit > 0 {
-		w.Header().Set("X-Byto-Queue-Wait-Ms", fmt.Sprint(permit.Wait.Milliseconds()))
-		w.Header().Set("X-Byto-Model-In-Flight", fmt.Sprint(permit.InFlight))
-		w.Header().Set("X-Byto-Model-Concurrency-Limit", fmt.Sprint(permit.Limit))
 		logEntry.QueueWaitMS = permit.Wait.Milliseconds()
 		logEntry.ModelInFlight = permit.InFlight
 		logEntry.ModelConcurrencyLimit = permit.Limit
 	}
 	var upstreamErr error
 	defer func() { permit.release(upstreamErr) }()
-	if req.Stream {
-		upstreamErr = s.stream(ctx, w, model, reqID, greq, requestOpts, &logEntry, start)
-		return
-	}
 	gresp, err := s.gemini.GenerateContent(ctx, model, greq, requestOpts)
 	upstreamErr = err
 	logEntry.LatencyMS = time.Since(start).Milliseconds()
 	if err != nil {
-		logEntry.Status = vertexGatewayStatus(err)
-		logEntry.Error = err.Error()
-		setUpstreamLog(&logEntry, err)
-		writeError(w, logEntry.Status, err.Error(), "vertex_error")
-		return
+		setUpstreamLog(logEntry, err)
+		return openai.ChatCompletionResponse{}, vertexGatewayStatus(err), vertexErrorCode(err), err
 	}
-	logEntry.Status = http.StatusOK
 	logEntry.PromptTokens = gresp.UsageMetadata.PromptTokenCount
 	logEntry.CompletionTokens = gresp.UsageMetadata.CandidatesTokenCount
 	logEntry.TotalTokens = gresp.UsageMetadata.TotalTokenCount
@@ -391,7 +420,7 @@ func (s *Server) chatCompletions(w http.ResponseWriter, r *http.Request) {
 		Choices: []openai.Choice{{Index: 0, Message: openai.ResponseMessage{Role: "assistant", Content: gemini.TextFromResponse(gresp)}, FinishReason: gemini.FinishReason(gresp)}},
 		Usage:   openai.Usage{PromptTokens: logEntry.PromptTokens, CompletionTokens: logEntry.CompletionTokens, TotalTokens: logEntry.TotalTokens, CachedTokens: logEntry.CachedTokens, CompletionTokensDetails: completionDetails, TrafficType: logEntry.TrafficType},
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return resp, http.StatusOK, "", nil
 }
 
 func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID string, greq gemini.GenerateRequest, opts gemini.RequestOptions, logEntry *gwlog.RequestLog, start time.Time) error {
@@ -442,6 +471,135 @@ func (s *Server) stream(ctx context.Context, w http.ResponseWriter, model, reqID
 	return nil
 }
 
+func (s *Server) chatJobs(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/v1/chat/jobs" {
+		writeError(w, http.StatusNotFound, "job not found", "not_found")
+		return
+	}
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed")
+		return
+	}
+	if !s.authorized(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid_api_key")
+		return
+	}
+	var req openai.ChatCompletionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid json", "invalid_request_error")
+		return
+	}
+	if req.Stream {
+		writeErrorCode(w, http.StatusBadRequest, "async chat jobs do not support stream=true", "invalid_request_error", "invalid_request")
+		return
+	}
+	if err := openai.ValidateRequest(req); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+		return
+	}
+	model, err := s.resolver.Resolve(req.Model)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_model")
+		return
+	}
+	if _, _, err := vertexRequestOptions(req.ServiceTier); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+		return
+	}
+	greq, err := gemini.FromOpenAI(req)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+		return
+	}
+	if _, err := s.applyReasoningConfig(model, req, &greq); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error(), "invalid_request_error")
+		return
+	}
+	job, created := s.jobs.Create(jobScope(r), strings.TrimSpace(r.Header.Get("Idempotency-Key")), req)
+	if created {
+		go s.runChatJob(job.ID)
+	}
+	writeJSON(w, http.StatusAccepted, job)
+}
+
+func (s *Server) chatJob(w http.ResponseWriter, r *http.Request) {
+	if !s.authorized(r) {
+		writeError(w, http.StatusUnauthorized, "unauthorized", "invalid_api_key")
+		return
+	}
+	id := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/chat/jobs/"), "/")
+	if id == "" || strings.Contains(id, "/") {
+		writeError(w, http.StatusNotFound, "job not found", "not_found")
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		job, ok := s.jobs.Get(id)
+		if !ok {
+			writeError(w, http.StatusNotFound, "job not found", "not_found")
+			return
+		}
+		writeJSON(w, http.StatusOK, job)
+	case http.MethodDelete:
+		job, ok := s.jobs.Cancel(id)
+		if !ok {
+			writeError(w, http.StatusNotFound, "job not found", "not_found")
+			return
+		}
+		writeJSON(w, http.StatusOK, job)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed", "method_not_allowed")
+	}
+}
+
+func (s *Server) runChatJob(id string) {
+	req, ok := s.jobs.request(id)
+	if !ok {
+		return
+	}
+	start := time.Now()
+	reqID := strings.TrimPrefix(id, "chatjob-")
+	logEntry := gwlog.RequestLog{Timestamp: start.UTC(), RequestID: reqID, Model: req.Model, Stream: req.Stream}
+	model, err := s.resolver.Resolve(req.Model)
+	if err != nil {
+		s.jobs.Fail(id, http.StatusBadRequest, err.Error(), "invalid_model")
+		return
+	}
+	logEntry.VertexModel = model
+	serviceTier, requestOpts, err := vertexRequestOptions(req.ServiceTier)
+	if err != nil {
+		s.jobs.Fail(id, http.StatusBadRequest, err.Error(), "invalid_request")
+		return
+	}
+	logEntry.ServiceTier = serviceTier
+	greq, err := gemini.FromOpenAI(req)
+	if err != nil {
+		s.jobs.Fail(id, http.StatusBadRequest, err.Error(), "invalid_request")
+		return
+	}
+	reasoningEffort, err := s.applyReasoningConfig(model, req, &greq)
+	if err != nil {
+		s.jobs.Fail(id, http.StatusBadRequest, err.Error(), "invalid_request")
+		return
+	}
+	logEntry.ReasoningEffort = reasoningEffort
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(s.cfg.AsyncJobTimeoutSeconds)*time.Second)
+	if !s.jobs.MarkRunning(id, cancel) {
+		cancel()
+		return
+	}
+	resp, status, code, err := s.runChatCompletion(ctx, model, reqID, req, greq, requestOpts, &logEntry, start)
+	cancel()
+	if err != nil {
+		if isCanceledError(err) {
+			return
+		}
+		s.jobs.Fail(id, status, err.Error(), code)
+		return
+	}
+	s.jobs.Complete(id, resp)
+}
+
 func sendSSE(w http.ResponseWriter, v any) {
 	b, _ := json.Marshal(v)
 	fmt.Fprintf(w, "data: %s\n\n", string(b))
@@ -476,6 +634,37 @@ func vertexGatewayStatus(err error) int {
 		return http.StatusTooManyRequests
 	}
 	return http.StatusBadGateway
+}
+
+func vertexErrorCode(err error) string {
+	var ve *gemini.VertexError
+	if !errors.As(err, &ve) {
+		return "upstream_error"
+	}
+	body := strings.ToUpper(ve.Body)
+	switch {
+	case ve.Status == http.StatusTooManyRequests && strings.Contains(body, "RESOURCE_EXHAUSTED"):
+		return "temporary_resource_exhausted"
+	case ve.Status == http.StatusTooManyRequests:
+		return "quota_or_rate_limit"
+	case ve.Status >= 500:
+		return "upstream_error"
+	default:
+		return "vertex_error"
+	}
+}
+
+func queueErrorResponse(err error) (int, string, string) {
+	switch {
+	case errors.Is(err, errAdaptiveQueueFull):
+		return http.StatusTooManyRequests, "queue_full", "model queue is full; retry later"
+	case errors.Is(err, errAdaptiveQueueTimeout):
+		return http.StatusTooManyRequests, "queue_timeout", "timed out waiting for model capacity"
+	case errors.Is(err, context.Canceled):
+		return http.StatusTooManyRequests, "request_canceled", err.Error()
+	default:
+		return http.StatusTooManyRequests, "temporary_resource_exhausted", err.Error()
+	}
 }
 
 func classifyUpstreamStatus(status int) string {
@@ -720,7 +909,11 @@ func writeRawJSON(w http.ResponseWriter, status int, b []byte) {
 	}
 }
 func writeError(w http.ResponseWriter, status int, msg, typ string) {
-	writeJSON(w, status, openai.ErrorResponse{Error: openai.ErrorBody{Message: msg, Type: typ}})
+	writeErrorCode(w, status, msg, typ, "")
+}
+
+func writeErrorCode(w http.ResponseWriter, status int, msg, typ, code string) {
+	writeJSON(w, status, openai.ErrorResponse{Error: openai.ErrorBody{Message: msg, Type: typ, Code: code}})
 }
 
 type requestIDKey struct{}
