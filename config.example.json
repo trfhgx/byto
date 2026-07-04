@@ -13,5 +13,13 @@
   "request_timeout_seconds": 180,
   "vertex_retry_max_attempts": 3,
   "vertex_retry_initial_ms": 250,
-  "vertex_retry_max_ms": 2000
+  "vertex_retry_max_ms": 2000,
+  "adaptive_concurrency_enabled": true,
+  "adaptive_concurrency_min": 1,
+  "adaptive_concurrency_initial": 4,
+  "adaptive_concurrency_max": 32,
+  "adaptive_queue_max_depth": 2048,
+  "adaptive_queue_max_wait_ms": 30000,
+  "async_job_retention_seconds": 3600,
+  "async_job_timeout_seconds": 300
 }

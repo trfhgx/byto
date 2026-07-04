@@ -143,21 +143,29 @@ func TestGenerateContentDoesNotRetryBadRequest(t *testing.T) {
 	}
 }
 
-func TestGenerateContentDoesNotRetryResourceExhausted(t *testing.T) {
+func TestGenerateContentRetriesResourceExhausted(t *testing.T) {
 	attempts := 0
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		attempts++
-		http.Error(w, `{"error":{"status":"RESOURCE_EXHAUSTED"}}`, http.StatusTooManyRequests)
+		if attempts == 1 {
+			http.Error(w, `{"error":{"status":"RESOURCE_EXHAUSTED"}}`, http.StatusTooManyRequests)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1,"candidatesTokenCount":1,"totalTokenCount":2}}`))
 	}))
 	defer ts.Close()
 
 	c := NewTestClient(ts.URL, time.Second, staticToken("tok"), "p", "global")
 	c.retry = RetryConfig{MaxAttempts: 3, InitialDelay: time.Millisecond, MaxDelay: time.Millisecond}
-	_, err := c.GenerateContent(context.Background(), "gemini-test", GenerateRequest{Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}}}, RequestOptions{})
-	if err == nil {
-		t.Fatal("expected error")
+	resp, err := c.GenerateContent(context.Background(), "gemini-test", GenerateRequest{Contents: []Content{{Role: "user", Parts: []Part{{Text: "hi"}}}}}, RequestOptions{})
+	if err != nil {
+		t.Fatal(err)
 	}
-	if attempts != 1 {
+	if attempts != 2 {
 		t.Fatalf("attempts %d", attempts)
+	}
+	if TextFromResponse(resp) != "ok" {
+		t.Fatalf("response %#v", resp)
 	}
 }

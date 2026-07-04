@@ -56,6 +56,9 @@ Every response includes `X-Request-ID`.
 | `GET` | `/v1/caches/{cache}` | Yes | Gets one Vertex cached content resource. |
 | `DELETE` | `/v1/caches/{cache}` | Yes | Deletes one Vertex cached content resource. |
 | `POST` | `/v1/chat/completions` | Yes | Creates a non-streaming or streaming chat completion. |
+| `POST` | `/v1/chat/jobs` | Yes | Creates an explicit async non-streaming chat job. |
+| `GET` | `/v1/chat/jobs/{id}` | Yes | Polls an async chat job. |
+| `DELETE` | `/v1/chat/jobs/{id}` | Yes | Cancels a queued or running async chat job when possible. |
 
 ## `GET /healthz`
 
@@ -372,6 +375,42 @@ data: {"id":"chatcmpl-...","object":"chat.completion.chunk","created":1793364660
 data: [DONE]
 ```
 
+## Async Chat Jobs
+
+Normal `POST /v1/chat/completions` requests stay synchronous. Byto may hold that HTTP request open only while it waits briefly for an adaptive concurrency slot. It does not silently turn normal requests into background jobs.
+
+Use `POST /v1/chat/jobs` when the caller explicitly wants async work. The request body is the same as non-streaming `/v1/chat/completions`; `stream=true` is rejected. The create response is `202 Accepted` with a job ID:
+
+```bash
+curl -s http://localhost:8080/v1/chat/jobs \
+  -H "Authorization: Bearer <gateway-api-key>" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: invoice-123-summary" \
+  -d '{
+    "model": "gemini-2.5-flash",
+    "messages": [{ "role": "user", "content": "Summarize invoice 123." }]
+  }' | jq
+```
+
+```json
+{
+  "id": "chatjob-...",
+  "object": "chat.job",
+  "status": "queued",
+  "created_at": "2026-07-04T16:00:00Z",
+  "updated_at": "2026-07-04T16:00:00Z",
+  "model": "gemini-2.5-flash"
+}
+```
+
+Poll with `GET /v1/chat/jobs/{id}`. Terminal statuses are `succeeded`, `failed`, and `canceled`. Successful jobs include a normal chat completion response under `response`; failed or canceled jobs include `error`.
+
+Cancel with `DELETE /v1/chat/jobs/{id}`. Cancellation is best effort: queued jobs are marked canceled before they start, and running jobs receive context cancellation. If Vertex has already completed, the terminal result may already be `succeeded` or `failed`.
+
+`Idempotency-Key` on `POST /v1/chat/jobs` prevents duplicate work after client/network retries. The key is scoped by the caller's bearer token when present, otherwise by `X-App-ID`, so two apps can reuse the same key without colliding. Retrying the same create request with the same key returns the existing job instead of creating another one.
+
+The first implementation stores jobs in memory. That is intentionally non-durable: jobs are lost on process restart and are not shared across gateway replicas. The `jobStore` abstraction keeps the path open for a DB-backed implementation, where `jobs` and scoped idempotency keys would be persisted in a transactional table and workers would claim queued rows with leases.
+
 ### Explicit Vertex Cache
 
 Pass a Vertex cached content resource through `extra_body.google.cached_content`.
@@ -429,18 +468,57 @@ Errors use this shape:
 | `401` | `invalid_api_key` | Missing or invalid bearer token. |
 | `401` or `403` | `provider_access_error` | Vertex rejected access to a MaaS provider/model for the configured Google Cloud account. |
 | `405` | `method_not_allowed` | Unsupported method for endpoint. |
-| `429` | `vertex_error` | Vertex returned resource exhaustion/capacity contention. The gateway preserves this status so callers can back off or use a higher-priority Vertex consumption mode. |
+| `429` | `server_overloaded` | Local model queue is full (`queue_full`) or wait timed out (`queue_timeout`). |
+| `429` | `server_overloaded` | Vertex returned temporary resource exhaustion (`temporary_resource_exhausted`) or quota/rate-limit pressure (`quota_or_rate_limit`). The gateway preserves this status so callers can back off or use a higher-priority Vertex consumption mode. |
 | `500` | `server_error` | Server cannot stream the response. |
 | `502` | `vertex_error` | Vertex returned an error or could not be reached. |
 
+## Adaptive Concurrency
+
+Byto can limit concurrent chat requests per resolved Vertex model and adjust that limit from recent outcomes.
+
+The limiter starts at `ADAPTIVE_CONCURRENCY_INITIAL`, allows only that many in-flight requests for the model, increases slowly after clean completions, and reduces quickly when Vertex returns resource exhaustion. Requests that arrive while the model is already at its current limit may wait in a bounded per-model queue for up to `ADAPTIVE_QUEUE_MAX_WAIT_MS`. If the queue is full, Byto returns `429` with `code=queue_full`. If the wait expires, Byto returns `429` with `code=queue_timeout`. If the client disconnects while queued, that queued waiter is removed.
+
+Response headers on admitted chat requests are written before the upstream Vertex call, so they are present on successful responses and on admitted requests that later return an upstream error such as `429 temporary_resource_exhausted`. They are not present when the request never receives a model slot, for example `queue_full`, `queue_timeout`, or client cancellation while still waiting.
+
+| Header | Description |
+| --- | --- |
+| `X-Byto-Queue-Wait-Ms` | Time spent waiting for an adaptive concurrency slot. |
+| `X-Byto-Model-Queue-Depth` | Remaining queued requests for the model after this request was admitted. |
+| `X-Byto-Model-Queue-Max` | Configured maximum queued synchronous requests per model. |
+| `X-Byto-Model-In-Flight` | In-flight count for the model after this request was admitted. |
+| `X-Byto-Model-Concurrency-Limit` | Current concurrency limit for the model when admitted. |
+
+Limiter scope:
+
+- The adaptive concurrency limiter is in-process and per resolved model. For example, `gemini-3.5-flash` and `gemini-3.1-flash-lite` have separate in-flight counts, queues, and learned AIMD limits.
+- Model aliases are resolved before limiter lookup, so aliases that point at the same Vertex model share the same limiter.
+- This is not a distributed limiter; multiple gateway processes each maintain their own local limiter state.
+
+Settings:
+
+| Environment | Default | Description |
+| --- | --- | --- |
+| `ADAPTIVE_CONCURRENCY_ENABLED` | `true` | Enable per-model adaptive concurrency. |
+| `ADAPTIVE_CONCURRENCY_MIN` | `1` | Lowest learned concurrency limit. |
+| `ADAPTIVE_CONCURRENCY_INITIAL` | `4` | Starting concurrency limit per model. |
+| `ADAPTIVE_CONCURRENCY_MAX` | `32` | Highest learned concurrency limit. |
+| `ADAPTIVE_QUEUE_MAX_DEPTH` | `2048` | Maximum queued synchronous requests per model. Set to `0` to fail immediately when all slots are busy. |
+| `ADAPTIVE_QUEUE_MAX_WAIT_MS` | `30000` | Maximum time a synchronous request waits for a model slot. |
+| `ASYNC_JOB_RETENTION_SECONDS` | `3600` | How long completed in-memory async jobs are retained for polling/idempotency. |
+| `ASYNC_JOB_TIMEOUT_SECONDS` | `300` | Background execution timeout for async jobs. |
+
+For queue sizing guidance and benchmark interpretation, see [Queue Sizing Guide](QUEUE_SIZING.md).
+
 ## Retries
 
-Byto retries only transient Vertex transport/upstream failures. This keeps retry behavior in the gateway while product and business decisions stay in the calling apps.
+Byto retries transient Vertex transport/upstream failures and Vertex resource exhaustion using exponential backoff with jitter. This keeps retry behavior in the gateway while product and business decisions stay in the calling apps.
 
 Retried by default:
 
 - network/request errors before a response is returned
 - `408`
+- `429`
 - `500`
 - `502`
 - `503`
@@ -450,7 +528,6 @@ Not retried:
 
 - `400` invalid request/model/parameters
 - `401` or `403` auth and permission errors
-- `429` resource exhaustion/capacity contention
 - model safety/content responses returned as successful Vertex responses
 - response parsing errors after a streaming response has already started
 

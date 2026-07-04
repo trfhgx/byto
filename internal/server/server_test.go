@@ -3,11 +3,13 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 
 type fakeGemini struct{}
 type fakeResourceExhaustedGemini struct{ fakeGemini }
+type fakeRateLimitGemini struct{ fakeGemini }
 type fakeCatalogVerifier struct {
 	fakeGemini
 	results map[string]error
@@ -45,6 +48,21 @@ type fakeVertexOpenAI struct {
 	streamErr  error
 	streamUsed bool
 }
+type blockingVertexOpenAI struct {
+	started chan struct{}
+	unblock chan struct{}
+	mu      sync.Mutex
+	current int
+	maxSeen int
+}
+type blockingGemini struct {
+	fakeGemini
+	started chan struct{}
+	unblock chan struct{}
+	mu      sync.Mutex
+	current int
+	maxSeen int
+}
 
 func (f fakeGemini) GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error) {
 	return gemini.GenerateResponse{Candidates: []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "ok"}}}, FinishReason: "STOP"}}, UsageMetadata: gemini.UsageMetadata{PromptTokenCount: 3, CandidatesTokenCount: 2, TotalTokenCount: 5, CachedContentTokenCount: 1, TrafficType: "ON_DEMAND_PRIORITY"}}, nil
@@ -59,6 +77,9 @@ func (f failChatGemini) GenerateContent(ctx context.Context, model string, in ge
 func (f failChatGemini) StreamGenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions, onChunk func(gemini.GenerateResponse) error) error {
 	f.t.Fatalf("Gemini StreamGenerateContent should not be called for %s", model)
 	return nil
+}
+func (f fakeRateLimitGemini) GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error) {
+	return gemini.GenerateResponse{}, &gemini.VertexError{Operation: "generateContent", Status: http.StatusTooManyRequests, Body: `{"error":{"status":"QUOTA_EXCEEDED"}}`}
 }
 func (f fakeReasoningGemini) GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error) {
 	if in.GenerationConfig == nil || in.GenerationConfig.ThinkingConfig == nil || in.GenerationConfig.ThinkingConfig.ThinkingBudget == nil {
@@ -80,6 +101,32 @@ func (f fakeReasoningGemini) GenerateContent(ctx context.Context, model string, 
 		Candidates:    []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "ok"}}}, FinishReason: "STOP"}},
 		UsageMetadata: gemini.UsageMetadata{PromptTokenCount: 3, CandidatesTokenCount: 2, TotalTokenCount: 10, ThoughtsTokenCount: 5, TrafficType: trafficType},
 	}, nil
+}
+func (f *blockingGemini) GenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions) (gemini.GenerateResponse, error) {
+	f.mu.Lock()
+	f.current++
+	if f.current > f.maxSeen {
+		f.maxSeen = f.current
+	}
+	f.mu.Unlock()
+	f.started <- struct{}{}
+	select {
+	case <-ctx.Done():
+		f.mu.Lock()
+		f.current--
+		f.mu.Unlock()
+		return gemini.GenerateResponse{}, ctx.Err()
+	case <-f.unblock:
+		f.mu.Lock()
+		f.current--
+		f.mu.Unlock()
+		return gemini.GenerateResponse{Candidates: []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "ok"}}}, FinishReason: "STOP"}}}, nil
+	}
+}
+func (f *blockingGemini) maxConcurrent() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.maxSeen
 }
 func (f fakeGemini) StreamGenerateContent(ctx context.Context, model string, in gemini.GenerateRequest, opts gemini.RequestOptions, onChunk func(gemini.GenerateResponse) error) error {
 	return onChunk(gemini.GenerateResponse{Candidates: []gemini.Candidate{{Content: gemini.Content{Parts: []gemini.Part{{Text: "hello"}}}}}, UsageMetadata: gemini.UsageMetadata{TrafficType: "ON_DEMAND_PRIORITY"}})
@@ -127,6 +174,39 @@ func (f *fakeVertexOpenAI) StreamChatCompletions(ctx context.Context, req openai
 		return f.streamErr
 	}
 	return onChunk(openai.StreamChunk{ID: "chatcmpl-test", Object: "chat.completion.chunk", Created: time.Now().Unix(), Model: req.Model, Choices: []openai.StreamChoice{{Index: 0, Delta: openai.StreamDelta{Content: "OK"}}}})
+}
+func (f *blockingVertexOpenAI) ChatCompletions(ctx context.Context, req openai.ChatCompletionRequest, opts gemini.RequestOptions) (openai.ChatCompletionResponse, error) {
+	f.mu.Lock()
+	f.current++
+	if f.current > f.maxSeen {
+		f.maxSeen = f.current
+	}
+	f.mu.Unlock()
+	f.started <- struct{}{}
+	select {
+	case <-ctx.Done():
+		f.mu.Lock()
+		f.current--
+		f.mu.Unlock()
+		return openai.ChatCompletionResponse{}, ctx.Err()
+	case <-f.unblock:
+		f.mu.Lock()
+		f.current--
+		f.mu.Unlock()
+		return openai.ChatCompletionResponse{ID: "chatcmpl-test", Object: "chat.completion", Created: time.Now().Unix(), Model: req.Model, Choices: []openai.Choice{{Index: 0, Message: openai.ResponseMessage{Role: "assistant", Content: "OK"}, FinishReason: "stop"}}, Usage: openai.Usage{PromptTokens: 1, CompletionTokens: 1, TotalTokens: 2}}, nil
+	}
+}
+func (f *blockingVertexOpenAI) StreamChatCompletions(ctx context.Context, req openai.ChatCompletionRequest, opts gemini.RequestOptions, onChunk func(openai.StreamChunk) error) error {
+	_, err := f.ChatCompletions(ctx, req, opts)
+	if err != nil {
+		return err
+	}
+	return onChunk(openai.StreamChunk{ID: "chatcmpl-test", Object: "chat.completion.chunk", Created: time.Now().Unix(), Model: req.Model, Choices: []openai.StreamChoice{{Index: 0, Delta: openai.StreamDelta{Content: "OK"}}}})
+}
+func (f *blockingVertexOpenAI) maxConcurrent() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.maxSeen
 }
 
 func testServer(t *testing.T) *Server {
@@ -244,6 +324,84 @@ func TestChatCompletionVertexOpenAIProviderAccessError(t *testing.T) {
 	}
 }
 
+func TestChatCompletionVertexOpenAIAdaptiveHeadersAndResourceClassification(t *testing.T) {
+	path := t.TempDir() + "/requests.jsonl"
+	logger := testLogger(t, path)
+	cfg := config.Config{
+		Project:                    "p",
+		Location:                   "global",
+		AllowedModels:              []string{"openai/gpt-oss-20b-maas"},
+		ModelAliases:               map[string]string{},
+		GatewayAPIKeys:             []string{"k"},
+		VertexBaseURL:              "http://vertex",
+		LogPath:                    path,
+		RequestTimeoutSeconds:      5,
+		AdaptiveConcurrencyEnabled: true,
+		AdaptiveConcurrencyMin:     1,
+		AdaptiveConcurrencyInitial: 1,
+		AdaptiveConcurrencyMax:     1,
+		AdaptiveQueueMaxDepth:      1,
+		AdaptiveQueueMaxWaitMS:     100,
+	}
+	vertex := &fakeVertexOpenAI{t: t, err: &gemini.VertexError{Operation: "openai.chatCompletions", Status: http.StatusTooManyRequests, Body: `{"error":{"message":"capacity temporarily unavailable"}}`}}
+	s := NewWithVertexOpenAI(cfg, failChatGemini{t: t}, vertex, logger)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"openai/gpt-oss-20b-maas","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"code":"temporary_resource_exhausted"`) {
+		t.Fatalf("body missing resource code: %s", w.Body.String())
+	}
+	if w.Header().Get("X-Byto-Model-Concurrency-Limit") != "1" {
+		t.Fatalf("missing adaptive header on vertex openai error: %#v", w.Header())
+	}
+}
+
+func TestChatCompletionVertexOpenAIQuotaClassification(t *testing.T) {
+	path := t.TempDir() + "/requests.jsonl"
+	logger := testLogger(t, path)
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"openai/gpt-oss-20b-maas"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, RequestTimeoutSeconds: 5, AdaptiveConcurrencyEnabled: true, AdaptiveConcurrencyMin: 1, AdaptiveConcurrencyInitial: 1, AdaptiveConcurrencyMax: 1, AdaptiveQueueMaxDepth: 1, AdaptiveQueueMaxWaitMS: 100}
+	vertex := &fakeVertexOpenAI{t: t, err: &gemini.VertexError{Operation: "openai.chatCompletions", Status: http.StatusTooManyRequests, Body: `{"error":{"status":"QUOTA_EXCEEDED"}}`}}
+	s := NewWithVertexOpenAI(cfg, failChatGemini{t: t}, vertex, logger)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"openai/gpt-oss-20b-maas","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), `"code":"quota_or_rate_limit"`) {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+}
+
+func TestChatCompletionVertexOpenAIStreamingUsesAdaptiveAdmission(t *testing.T) {
+	path := t.TempDir() + "/requests.jsonl"
+	logger := testLogger(t, path)
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"xai/grok-4.20-reasoning"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, RequestTimeoutSeconds: 5, AdaptiveConcurrencyEnabled: true, AdaptiveConcurrencyMin: 1, AdaptiveConcurrencyInitial: 1, AdaptiveConcurrencyMax: 1, AdaptiveQueueMaxDepth: 1, AdaptiveQueueMaxWaitMS: 100}
+	vertex := &fakeVertexOpenAI{t: t, wantModel: "xai/grok-4.20-reasoning"}
+	s := NewWithVertexOpenAI(cfg, failChatGemini{t: t}, vertex, logger)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"xai/grok-4.20-reasoning","stream":true,"messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if !vertex.streamUsed {
+		t.Fatal("vertex openai stream client was not called")
+	}
+	if w.Header().Get("X-Byto-Model-Concurrency-Limit") != "1" {
+		t.Fatalf("missing adaptive stream header: %#v", w.Header())
+	}
+	if !strings.Contains(w.Body.String(), "data: [DONE]") {
+		t.Fatalf("stream did not finish: %s", w.Body.String())
+	}
+}
+
 func TestChatCompletionDefaultsToPriorityServiceTier(t *testing.T) {
 	s := testServer(t)
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`))
@@ -323,7 +481,7 @@ func TestChatCompletionPreservesResourceExhaustedStatus(t *testing.T) {
 	dir := t.TempDir()
 	path := dir + "/requests.jsonl"
 	logger := testLogger(t, path)
-	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5}
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5, AdaptiveConcurrencyEnabled: true, AdaptiveConcurrencyMin: 1, AdaptiveConcurrencyInitial: 1, AdaptiveConcurrencyMax: 1, AdaptiveQueueMaxDepth: 1, AdaptiveQueueMaxWaitMS: 100}
 	s := New(cfg, fakeResourceExhaustedGemini{}, logger)
 
 	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`))
@@ -332,6 +490,12 @@ func TestChatCompletionPreservesResourceExhaustedStatus(t *testing.T) {
 	s.Routes().ServeHTTP(w, req)
 	if w.Code != http.StatusTooManyRequests {
 		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"code":"temporary_resource_exhausted"`) {
+		t.Fatalf("body missing resource exhausted code: %s", w.Body.String())
+	}
+	if w.Header().Get("X-Byto-Model-Concurrency-Limit") != "1" {
+		t.Fatalf("missing adaptive header on resource exhausted response: %#v", w.Header())
 	}
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -342,6 +506,374 @@ func TestChatCompletionPreservesResourceExhaustedStatus(t *testing.T) {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("log missing %s:\n%s", want, logs)
 		}
+	}
+}
+
+func TestChatCompletionClassifiesQuotaRateLimit(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/requests.jsonl"
+	logger := testLogger(t, path)
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5}
+	s := New(cfg, fakeRateLimitGemini{}, logger)
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), `"code":"quota_or_rate_limit"`) {
+		t.Fatalf("body missing quota code: %s", w.Body.String())
+	}
+}
+
+func TestAdaptiveConcurrencyLimitsPerModel(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/requests.jsonl"
+	logger := testLogger(t, path)
+	gem := &blockingGemini{started: make(chan struct{}, 2), unblock: make(chan struct{})}
+	cfg := config.Config{
+		Project:                    "p",
+		Location:                   "global",
+		AllowedModels:              []string{"gemini-3.1-pro-preview"},
+		ModelAliases:               map[string]string{},
+		GatewayAPIKeys:             []string{"k"},
+		VertexBaseURL:              "http://vertex",
+		LogPath:                    path,
+		LogMaxBytes:                1024 * 1024,
+		RequestTimeoutSeconds:      5,
+		AdaptiveConcurrencyEnabled: true,
+		AdaptiveConcurrencyMin:     1,
+		AdaptiveConcurrencyInitial: 1,
+		AdaptiveConcurrencyMax:     1,
+	}
+	s := New(cfg, gem, logger)
+	handler := s.Routes()
+	body := `{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`
+
+	firstDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer k")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		firstDone <- w
+	}()
+	<-gem.started
+
+	secondDone := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer k")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		secondDone <- w
+	}()
+
+	select {
+	case <-gem.started:
+		t.Fatal("second request entered upstream before the first released its permit")
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(gem.unblock)
+	for _, done := range []chan *httptest.ResponseRecorder{firstDone, secondDone} {
+		w := <-done
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d body %s", w.Code, w.Body.String())
+		}
+		if w.Header().Get("X-Byto-Model-Concurrency-Limit") != "1" {
+			t.Fatalf("missing concurrency header: %#v", w.Header())
+		}
+	}
+	if got := gem.maxConcurrent(); got != 1 {
+		t.Fatalf("max concurrent upstream calls %d, want 1", got)
+	}
+}
+
+func TestAdaptiveConcurrencySeparatesGeminiAndVertexOpenAIModels(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/requests.jsonl"
+	logger := testLogger(t, path)
+	gem := &blockingGemini{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	vertex := &fakeVertexOpenAI{t: t, wantModel: "openai/gpt-oss-20b-maas"}
+	cfg := config.Config{
+		Project:                    "p",
+		Location:                   "global",
+		AllowedModels:              []string{"gemini-3.1-pro-preview", "openai/gpt-oss-20b-maas"},
+		ModelAliases:               map[string]string{},
+		GatewayAPIKeys:             []string{"k"},
+		VertexBaseURL:              "http://vertex",
+		LogPath:                    path,
+		LogMaxBytes:                1024 * 1024,
+		RequestTimeoutSeconds:      5,
+		AdaptiveConcurrencyEnabled: true,
+		AdaptiveConcurrencyMin:     1,
+		AdaptiveConcurrencyInitial: 1,
+		AdaptiveConcurrencyMax:     1,
+		AdaptiveQueueMaxDepth:      0,
+		AdaptiveQueueMaxWaitMS:     100,
+	}
+	s := NewWithVertexOpenAI(cfg, gem, vertex, logger)
+	handler := s.Routes()
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`))
+		req.Header.Set("Authorization", "Bearer k")
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, req)
+		done <- w
+	}()
+	<-gem.started
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"openai/gpt-oss-20b-maas","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("vertex request should use a separate limiter bucket, got %d body %s", w.Code, w.Body.String())
+	}
+	if w.Header().Get("X-Byto-Model-Concurrency-Limit") != "1" {
+		t.Fatalf("missing vertex adaptive header: %#v", w.Header())
+	}
+	close(gem.unblock)
+	if got := <-done; got.Code != http.StatusOK {
+		t.Fatalf("gemini status %d body %s", got.Code, got.Body.String())
+	}
+}
+
+func TestAdaptiveConcurrencyAliasesShareResolvedModel(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/requests.jsonl"
+	logger := testLogger(t, path)
+	gem := &blockingGemini{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{"alias-a": "gemini-3.1-pro-preview", "alias-b": "gemini-3.1-pro-preview"}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5, AdaptiveConcurrencyEnabled: true, AdaptiveConcurrencyMin: 1, AdaptiveConcurrencyInitial: 1, AdaptiveConcurrencyMax: 1, AdaptiveQueueMaxDepth: 0, AdaptiveQueueMaxWaitMS: 100}
+	s := New(cfg, gem, logger)
+	handler := s.Routes()
+	done := make(chan struct{})
+	go func() {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"alias-a","messages":[{"role":"user","content":"hi"}]}`))
+		req.Header.Set("Authorization", "Bearer k")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+		close(done)
+	}()
+	<-gem.started
+
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(`{"model":"alias-b","messages":[{"role":"user","content":"hi"}]}`))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), `"code":"queue_full"`) {
+		t.Fatalf("alias request should share resolved limiter bucket, got %d body %s", w.Code, w.Body.String())
+	}
+	close(gem.unblock)
+	<-done
+}
+
+func TestAdaptiveQueueFull(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/requests.jsonl"
+	logger := testLogger(t, path)
+	gem := &blockingGemini{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5, AdaptiveConcurrencyEnabled: true, AdaptiveConcurrencyMin: 1, AdaptiveConcurrencyInitial: 1, AdaptiveConcurrencyMax: 1, AdaptiveQueueMaxDepth: 0, AdaptiveQueueMaxWaitMS: 100}
+	s := New(cfg, gem, logger)
+	handler := s.Routes()
+	body := `{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`
+	done := make(chan struct{})
+	go func() {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer k")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+		close(done)
+	}()
+	<-gem.started
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), `"code":"queue_full"`) {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	close(gem.unblock)
+	<-done
+}
+
+func TestAdaptiveQueueTimeout(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/requests.jsonl"
+	logger := testLogger(t, path)
+	gem := &blockingGemini{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5, AdaptiveConcurrencyEnabled: true, AdaptiveConcurrencyMin: 1, AdaptiveConcurrencyInitial: 1, AdaptiveConcurrencyMax: 1, AdaptiveQueueMaxDepth: 1, AdaptiveQueueMaxWaitMS: 20}
+	s := New(cfg, gem, logger)
+	handler := s.Routes()
+	body := `{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`
+	done := make(chan struct{})
+	go func() {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+		req.Header.Set("Authorization", "Bearer k")
+		handler.ServeHTTP(httptest.NewRecorder(), req)
+		close(done)
+	}()
+	<-gem.started
+	req := httptest.NewRequest("POST", "/v1/chat/completions", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusTooManyRequests || !strings.Contains(w.Body.String(), `"code":"queue_timeout"`) {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	close(gem.unblock)
+	<-done
+}
+
+func TestAdaptiveQueueClientCancel(t *testing.T) {
+	limiters := newAdaptiveLimiters(config.Config{AdaptiveConcurrencyEnabled: true, AdaptiveConcurrencyMin: 1, AdaptiveConcurrencyInitial: 1, AdaptiveConcurrencyMax: 1, AdaptiveQueueMaxDepth: 1, AdaptiveQueueMaxWaitMS: 1000})
+	p, err := limiters.acquire(context.Background(), "gemini-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	waitDone := make(chan error, 1)
+	go func() {
+		_, err := limiters.acquire(ctx, "gemini-test")
+		waitDone <- err
+	}()
+	time.Sleep(10 * time.Millisecond)
+	cancel()
+	if err := <-waitDone; !errors.Is(err, context.Canceled) {
+		t.Fatalf("queued acquire err %v, want canceled", err)
+	}
+	p.release(nil)
+	p2, err := limiters.acquire(context.Background(), "gemini-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2.release(nil)
+}
+
+func TestAsyncJobCreatePollCompletionAndIdempotency(t *testing.T) {
+	s := testServer(t)
+	body := `{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/jobs", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer k")
+	req.Header.Set("Idempotency-Key", "retry-1")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	var job chatJob
+	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+		t.Fatal(err)
+	}
+	req2 := httptest.NewRequest("POST", "/v1/chat/jobs", strings.NewReader(body))
+	req2.Header.Set("Authorization", "Bearer k")
+	req2.Header.Set("Idempotency-Key", "retry-1")
+	w2 := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w2, req2)
+	if !strings.Contains(w2.Body.String(), job.ID) {
+		t.Fatalf("idempotent response changed: %s want %s", w2.Body.String(), job.ID)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		get := httptest.NewRequest("GET", "/v1/chat/jobs/"+job.ID, nil)
+		get.Header.Set("Authorization", "Bearer k")
+		gw := httptest.NewRecorder()
+		s.Routes().ServeHTTP(gw, get)
+		if gw.Code != http.StatusOK {
+			t.Fatalf("get status %d body %s", gw.Code, gw.Body.String())
+		}
+		var current chatJob
+		if err := json.Unmarshal(gw.Body.Bytes(), &current); err != nil {
+			t.Fatal(err)
+		}
+		if current.Status == jobStatusSucceeded {
+			if current.Response == nil || !strings.Contains(current.Response.Choices[0].Message.Content, "ok") {
+				t.Fatalf("missing response: %#v", current.Response)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job did not complete: %s", gw.Body.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestAsyncJobDispatchesVertexOpenAIRuntime(t *testing.T) {
+	path := t.TempDir() + "/requests.jsonl"
+	logger := testLogger(t, path)
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"openai/gpt-oss-20b-maas"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, RequestTimeoutSeconds: 5, AsyncJobRetentionSeconds: 60, AsyncJobTimeoutSeconds: 5, AdaptiveConcurrencyEnabled: true, AdaptiveConcurrencyMin: 1, AdaptiveConcurrencyInitial: 1, AdaptiveConcurrencyMax: 1, AdaptiveQueueMaxDepth: 1, AdaptiveQueueMaxWaitMS: 100}
+	vertex := &fakeVertexOpenAI{t: t, wantModel: "openai/gpt-oss-20b-maas"}
+	s := NewWithVertexOpenAI(cfg, failChatGemini{t: t}, vertex, logger)
+	body := `{"model":"openai/gpt-oss-20b-maas","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/jobs", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status %d body %s", w.Code, w.Body.String())
+	}
+	var job chatJob
+	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+		t.Fatal(err)
+	}
+	if job.ResolvedModel != "openai/gpt-oss-20b-maas" || job.Runtime != string(chatRuntimeVertexOpenAI) {
+		t.Fatalf("job runtime metadata = %#v", job)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		get := httptest.NewRequest("GET", "/v1/chat/jobs/"+job.ID, nil)
+		get.Header.Set("Authorization", "Bearer k")
+		gw := httptest.NewRecorder()
+		s.Routes().ServeHTTP(gw, get)
+		if gw.Code != http.StatusOK {
+			t.Fatalf("get status %d body %s", gw.Code, gw.Body.String())
+		}
+		var current chatJob
+		if err := json.Unmarshal(gw.Body.Bytes(), &current); err != nil {
+			t.Fatal(err)
+		}
+		if current.Status == jobStatusSucceeded {
+			if current.Response == nil || current.Response.Model != "openai/gpt-oss-20b-maas" {
+				t.Fatalf("missing vertex response: %#v", current.Response)
+			}
+			if !vertex.called {
+				t.Fatal("vertex openai client was not called")
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job did not complete: %s", gw.Body.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestAsyncJobCancel(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/requests.jsonl"
+	logger := testLogger(t, path)
+	gem := &blockingGemini{started: make(chan struct{}, 1), unblock: make(chan struct{})}
+	cfg := config.Config{Project: "p", Location: "global", AllowedModels: []string{"gemini-3.1-pro-preview"}, ModelAliases: map[string]string{}, GatewayAPIKeys: []string{"k"}, VertexBaseURL: "http://vertex", LogPath: path, LogMaxBytes: 1024 * 1024, RequestTimeoutSeconds: 5, AsyncJobRetentionSeconds: 60, AsyncJobTimeoutSeconds: 5}
+	s := New(cfg, gem, logger)
+	body := `{"model":"gemini-3.1-pro-preview","messages":[{"role":"user","content":"hi"}]}`
+	req := httptest.NewRequest("POST", "/v1/chat/jobs", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer k")
+	w := httptest.NewRecorder()
+	s.Routes().ServeHTTP(w, req)
+	var job chatJob
+	if err := json.Unmarshal(w.Body.Bytes(), &job); err != nil {
+		t.Fatal(err)
+	}
+	<-gem.started
+	del := httptest.NewRequest("DELETE", "/v1/chat/jobs/"+job.ID, nil)
+	del.Header.Set("Authorization", "Bearer k")
+	dw := httptest.NewRecorder()
+	s.Routes().ServeHTTP(dw, del)
+	if dw.Code != http.StatusOK || !strings.Contains(dw.Body.String(), `"status":"canceled"`) {
+		t.Fatalf("delete status %d body %s", dw.Code, dw.Body.String())
 	}
 }
 
