@@ -13,20 +13,20 @@
   <a href="https://github.com/trfhgx/byto/releases"><img src="https://img.shields.io/github/v/release/trfhgx/byto?display_name=tag&sort=semver" alt="Latest Release" /></a>
 </p>
 
-Byto is a Go gateway that turns your own Vertex AI Gemini access into an OpenAI-compatible API.
+Byto connects OpenAI-compatible chat apps to Google's Gemini models through Vertex AI.
 
 ```text
 your apps -> Byto -> Vertex AI Gemini
 ```
 
-It is built for explicit model selection, service API keys, production service-account auth, priority PayGo headers, reasoning controls, adaptive per-model concurrency, JSONL logs, and Docker/server deployments.
+People use Byto for roleplay chatbots and other chat experiences. Developers also use it to test and run AI applications with live production traffic, including experiments with the Vertex AI free tier.
 
 ### Why Byto
 
-- **Keep existing clients** — point OpenAI-compatible applications at one gateway instead of rewriting each integration for Vertex AI.
-- **Centralize provider mechanics** — handle Google authentication, model availability, streaming translation, caching, and reasoning controls once.
-- **Operate it directly** — deploy a small Go service locally, with Docker, or on Cloud Run while retaining explicit model and access policies.
-- **Inspect real traffic** — record structured request, upstream, token, reasoning, and traffic-type data without changing application prompts.
+- **Keep existing apps** — point OpenAI-compatible chat tools at Byto instead of rebuilding them for Vertex AI.
+- **Set up Gemini once** — manage Google access, available models, streaming, caching, and reasoning controls in one place.
+- **Run it where you want** — use one small Go service locally, with Docker, or on Cloud Run.
+- **See how it is working** — structured logs show requests, provider responses, tokens, errors, and live traffic without changing application prompts.
 
 ---
 
@@ -187,6 +187,14 @@ make test-live MODEL=gemini-2.5-flash
 ```
 
 CI also runs fake-cloud production setup e2e checks for Linux, macOS/Linux-style Bash on Windows, and the native Windows PowerShell setup path.
+
+The repository includes repeatable [k6](https://grafana.com/docs/k6/latest/set-up/install-k6/) load tests used to benchmark health checks, model listing, and real chat requests:
+
+```bash
+k6 run load/healthz.js
+URL=http://localhost:8080 API_KEY=<gateway-api-key> VUS=5 DURATION=30s \
+  k6 run load/chat-catalog.js
+```
 
 ---
 
