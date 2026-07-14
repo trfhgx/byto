@@ -9,6 +9,8 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blueviolet?style=flat-square" alt="License" /></a>
   <a href="https://www.docker.com"><img src="https://img.shields.io/badge/Platform-Docker%20%7C%20Cloud%20Run-2496ED?style=flat-square&logo=docker&logoColor=white" alt="Docker" /></a>
   <a href="https://cloud.google.com/vertex-ai"><img src="https://img.shields.io/badge/Provider-Vertex%20Gemini-4285F4?style=flat-square&logo=google-cloud&logoColor=white" alt="Vertex AI" /></a>
+  <a href="https://github.com/trfhgx/byto/actions/workflows/test.yml"><img src="https://github.com/trfhgx/byto/actions/workflows/test.yml/badge.svg" alt="Tests" /></a>
+  <a href="https://github.com/trfhgx/byto/releases"><img src="https://img.shields.io/github/v/release/trfhgx/byto?display_name=tag&sort=semver" alt="Latest Release" /></a>
 </p>
 
 Byto is a Go gateway that turns your own Vertex AI Gemini access into an OpenAI-compatible API.
@@ -19,9 +21,20 @@ your apps -> Byto -> Vertex AI Gemini
 
 It is built for explicit model selection, service API keys, production service-account auth, priority PayGo headers, reasoning controls, adaptive per-model concurrency, JSONL logs, and Docker/server deployments.
 
+### Why Byto
+
+- **Keep existing clients** — point OpenAI-compatible applications at one gateway instead of rewriting each integration for Vertex AI.
+- **Centralize provider mechanics** — handle Google authentication, model availability, streaming translation, caching, and reasoning controls once.
+- **Operate it directly** — deploy a small Go service locally, with Docker, or on Cloud Run while retaining explicit model and access policies.
+- **Inspect real traffic** — record structured request, upstream, token, reasoning, and traffic-type data without changing application prompts.
+
 ---
 
 ## Quick Start
+
+Download a tagged release from [GitHub Releases](https://github.com/trfhgx/byto/releases). Releases include standalone macOS, Linux, and Windows binaries for AMD64 and ARM64, plus SHA-256 checksums.
+
+Alternatively, build and run from source:
 
 Clone the repo first:
 
